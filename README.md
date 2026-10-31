@@ -28,13 +28,14 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 - **Sesli uyarı:**
   - Vakte kaç dakika kala çalacağı ve hangi vakitlerde çalacağı ayarlanır.
   - Ses seviyesi ayarlanır.
-  - Basit sesler ve makam ezgileri (Hicaz, Uşşak, Rast) arasından seçilir; istenirse kendi `.wav` dosyan da kullanılır.
+  - Basit sesler ve makam ezgileri (Hicaz, Uşşak, Rast) arasından seçilir; istenirse kendi ses dosyan da (mp3, wav, m4a, wma...) kullanılır.
 - **Hadis balonu:** Kütüb-i Sitte'den namaz, oruç, abdest, sadaka, zikir ve güzel ahlak konularında kısa hadisler gösterilir.
 - **3 stil:** Kart, Hap ve Klasik
 - **4 renk:** Koyu, Açık, Yeşil, Lacivert
 - **Saydamlık seçenekleri,** "sadece yazı" modu dahil
 - **Serbest boyut:** ayarlardan ya da pencere üzerinde `Ctrl` + fare tekerleği ile
 - **Saat dilimi kontrolü:** bilgisayarın saat dilimi seçilen şehirle uyuşmuyorsa uyarır
+- **Oyunlara karışmaz:** sayaç ve balonlar odağı almaz, tam ekran oyunda klavye ve fare oyunda kalır
 - **Ekran kenarlarına yapışma:** yapışık kenarda kalır, birden fazla ekranda da çalışır
 - **Türkçe ve İngilizce**
 - **İnternet kesilse de çalışır:** yaklaşık bir yıllık vakit bilgisayara kaydedilir

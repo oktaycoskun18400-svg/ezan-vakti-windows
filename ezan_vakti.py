@@ -38,7 +38,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 # Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
-SURUM = "0.5.0"
+SURUM = "0.5.1"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
@@ -94,7 +94,7 @@ SESLER = {
     "hicaz":  ("Hicaz ezgisi (ney)", "Hijaz melody (ney)"),
     "ussak":  ("Uşşak ezgisi (ney)", "Ushshaq melody (ney)"),
     "rast":   ("Rast ezgisi (ney)", "Rast melody (ney)"),
-    "custom": ("Kendi ses dosyam (.wav)", "My own sound file (.wav)"),
+    "custom": ("Kendi ses dosyam (mp3, wav...)", "My own sound file (mp3, wav...)"),
 }
 ONIZLEME_AYARLARI = ("style", "expanded", "theme", "opacity", "size")
 STILLER = {"kart": ("Kart", "Card"), "hap": ("Hap", "Pill"), "klasik": ("Klasik", "Classic")}
@@ -173,7 +173,7 @@ METINLER = {
     "listen": ("Dinle", "Play"),
     "volume": ("Ses seviyesi:", "Volume:"),
     "pick_wav": ("Ses dosyası seçin", "Choose a sound file"),
-    "wav_type": ("WAV ses dosyası", "WAV sound file"),
+    "wav_type": ("Ses dosyaları", "Sound files"),
     "appearance": (" Görünüm ", " Appearance "),
     "color": ("Renk:", "Color:"),
     "opacity": ("Saydamlık:", "Transparency:"),
@@ -197,7 +197,7 @@ VARSAYILAN_AYARLAR = {
     "district_id": None, "district_name": "", "district_url": "",
     "alarm_on": True, "alarm_minutes": 10, "alarm_at_time": True,
     "alarm_vakitler": ["İmsak", "Öğle", "İkindi", "Akşam", "Yatsı"],
-    "sound": "zil", "sound_file": "", "volume": 80,
+    "sound": "zil", "sound_file": "", "volume": 40,
     "style": "kart", "theme": VARSAYILAN_TEMA, "opacity": "Yarı saydam", "size": 13,
     "x": None, "y": None, "snap_x": "right", "snap_y": "bottom",
     "expanded": False, "autostart": False,
@@ -930,6 +930,48 @@ def pc_utc_farki(gun):
     return fark.total_seconds() / 3600
 
 
+# Diyanet ülke kimliği -> o ülkede yıl boyunca görülen UTC farkları (dakika, yaz saati dahil).
+# IANA saat dilimi verisinden üretildi; bilgisayarın farkı bunların dışındaysa saat dilimi yanlış seçilmiştir.
+ULKE_UTC_FARKLARI = {
+    "1": (120, 180), "2": (180,), "3": (60, 120), "4": (60, 120), "5": (240,), "6": (120, 180),
+    "7": (60, 120), "8": (60, 120), "9": (60, 120), "10": (60, 120), "11": (60, 120), "12": (60, 120),
+    "13": (60, 120), "14": (60, 120), "15": (0, 60), "16": (60, 120), "17": (60, 120), "18": (60, 120),
+    "19": (60, 120), "20": (120, 180), "21": (60, 120), "22": (120, 180), "23": (0, 60, 120), "24": (60, 120),
+    "25": (60, 120), "26": (60, 120), "27": (60, 120), "28": (60, 120), "29": (180,), "30": (60, 120),
+    "31": (60, 120), "32": (0, 60), "33": (-600, -540, -480, -420, -360, -300, -240), "34": (60, 120),
+    "35": (60, 120), "36": (60, 120), "37": (120, 180), "38": (60, 120), "39": (60, 120), "40": (120, 180),
+    "41": (120, 180), "42": (120, 180), "44": (120, 180), "45": (-60, 0, 60), "46": (120, 180),
+    "47": (120, 180), "48": (-240, -180, -120, -60, 0), "49": (60, 120), "51": (-240, -180),
+    "52": (-480, -420, -360, -300, -240, -210, -180, -150), "53": (-480, -420, -360, -300),
+    "54": (-300, -240), "55": (120,), "56": (660,), "57": (-300,), "58": (-240,),
+    "59": (480, 525, 570, 600, 630, 660), "60": (420, 480), "61": (360, 480), "62": (240,), "63": (60,),
+    "64": (180,), "65": (120,), "66": (-240,), "67": (120,), "68": (-240,), "69": (-300,), "70": (-300, -240),
+    "71": (0,), "72": (-240,), "73": (0,), "74": (330,), "75": (180,), "76": (345,), "77": (300,),
+    "79": (60,), "80": (60,), "81": (120,), "82": (-240,), "83": (-240,), "84": (60,), "85": (600, 660),
+    "86": (60,), "87": (-240,), "88": (180,), "89": (-300,), "90": (-240,), "91": (0,), "92": (300,),
+    "93": (240,), "94": (180,), "95": (180,), "96": (-240,), "97": (480,), "98": (180,), "99": (-360,),
+    "100": (480,), "101": (300,), "102": (0,), "103": (300,), "104": (240,), "105": (-360,), "106": (0,),
+    "107": (480,), "108": (480,), "109": (0,), "110": (180,), "111": (0,), "112": (240,), "113": (480,),
+    "114": (180,), "115": (660,), "116": (540,), "117": (420, 480, 540), "118": (60,), "119": (-300,),
+    "120": (0,), "122": (0,), "123": (-240,), "124": (180,), "125": (-240,), "126": (480,), "127": (60,),
+    "128": (540,), "129": (120,), "130": (780,), "131": (300,), "132": (180,), "133": (180,), "134": (420,),
+    "135": (420,), "136": (-240,), "137": (420,), "138": (240,), "139": (-360, -300), "140": (60,),
+    "141": (-360,), "142": (540,), "143": (0,), "144": (-60,), "145": (0, 60),
+    "146": (-300, -240, -180, -120), "147": (-240,), "148": (180,), "149": (540,), "150": (180,),
+    "151": (120,), "152": (0,), "153": (-240,), "154": (390,), "155": (360,), "156": (60,), "157": (180,),
+    "158": (120,), "159": (300,), "160": (180,), "161": (420,), "162": (-360,), "163": (60, 120),
+    "164": (240,), "165": (-360,), "166": (270,), "167": (120,), "168": (360,), "169": (600,), "170": (120,),
+    "171": (-240,), "172": (-180,), "173": (240,), "174": (120,), "175": (180,), "176": (540,), "177": (360,),
+    "178": (-660,), "179": (480,), "180": (60, 120), "181": (60,), "182": (-360,), "183": (-480,),
+    "184": (60,), "185": (600, 660), "186": (-240,), "187": (330,), "188": (-240,), "189": (120, 180),
+    "191": (180,), "192": (180,), "193": (720, 765, 780, 825), "194": (-180,), "196": (120,), "197": (720,),
+    "198": (780,), "199": (-180,), "200": (-360, -300, -240, -180), "201": (-180,), "202": (210,),
+    "203": (120,), "204": (120, 180), "205": (120, 180), "206": (120, 180),
+    "207": (120, 180, 240, 300, 360, 420, 480, 540, 600, 660, 720), "208": (180,), "209": (-300, -240),
+    "210": (0,), "212": (0, 60), "213": (0,), "214": (120,), "216": (120,),
+}
+
+
 def saat_dilimi_uyumsuz(ulke_id, gunler):
     """Bilgisayarın saati seçilen şehrin saatiyle uyuşmuyor mu? (Kalan süreler o zaman kayar.)
 
@@ -940,6 +982,9 @@ def saat_dilimi_uyumsuz(ulke_id, gunler):
     """
     if not gunler:
         return False
+    izinli = ULKE_UTC_FARKLARI.get(str(ulke_id))
+    if izinli and round(pc_utc_farki(bugun()) * 60) not in izinli:
+        return True  # bilgisayarın şu anki farkı o ülkede hiçbir yerde, hiçbir mevsimde görülmüyor
     if ulke_id == TURKIYE[1]:
         ilk = bugun()
         return any(abs(pc_utc_farki(ilk + dt.timedelta(days=i)) - 3) > 0.01 for i in range(0, 366, 7))
@@ -1201,6 +1246,49 @@ def calisma_alani(x, y):
     return r.left, r.top, r.right, r.bottom
 
 
+# Sayaç ve balon hiçbir zaman klavye/fare odağını almamalı: tam ekran (pencereli) oyunlarda öne
+# geçince oyun girişleri kesiliyordu. Tk'nin "-topmost" ve lift() çağrıları pencereyi etkinleştirebildiği
+# için üstte tutma işi doğrudan SWP_NOACTIVATE ile yapılır.
+GWL_EXSTYLE, WS_EX_NOACTIVATE = -20, 0x08000000
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+HWND_TOPMOST = wt.HWND(-1)
+_user32.SetWindowPos.argtypes = [wt.HWND, wt.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.UINT]
+_user32.GetWindowLongW.argtypes = [wt.HWND, ctypes.c_int]
+_user32.SetWindowLongW.argtypes = [wt.HWND, ctypes.c_int, ctypes.c_long]
+_user32.GetForegroundWindow.restype = wt.HWND
+_user32.SetForegroundWindow.argtypes = [wt.HWND]
+_user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+
+
+def _hwnd(pencere):
+    return int(pencere.wm_frame(), 16)
+
+
+def odak_almasin(pencere):
+    """Pencereye tıklansa da etkinleşmesin; odak o an hangi programdaysa orada kalsın."""
+    h = _hwnd(pencere)
+    _user32.SetWindowLongW(h, GWL_EXSTYLE, _user32.GetWindowLongW(h, GWL_EXSTYLE) | WS_EX_NOACTIVATE)
+
+
+def ustte_tut(pencere):
+    _user32.SetWindowPos(_hwnd(pencere), HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+
+
+def on_pencere():
+    return _user32.GetForegroundWindow()
+
+
+def odagi_geri_ver(onceki):
+    """Yeni açılan pencerelerimizden biri odağı kaptıysa odağı önceki programa (ör. oyuna) geri verir."""
+    simdiki = on_pencere()
+    if not onceki or not simdiki or simdiki == onceki:
+        return
+    pid = wt.DWORD()
+    _user32.GetWindowThreadProcessId(simdiki, ctypes.byref(pid))
+    if pid.value == os.getpid():
+        _user32.SetForegroundWindow(onceki)
+
+
 # ---------------------------------------------------------------- ses
 # Windows'un ses düzeni "Ses yok" olsa bile çalsın diye sesler dosyadan çalınır.
 
@@ -1360,7 +1448,35 @@ def _ses_cal(sound, sound_file, volume):
         winsound.PlaySound(SES_FILE, winsound.SND_FILENAME | winsound.SND_ASYNC)
 
 
+_winmm = ctypes.windll.winmm
+SES_UZANTILARI = "*.wav *.mp3 *.m4a *.aac *.wma *.flac"
+
+
+def _mci(komut):
+    return _winmm.mciSendStringW(komut, None, 0, None)
+
+
+def mci_durdur():
+    _mci("close ezan_ses")
+
+
+def mci_cal(yol, volume):
+    """WAV dışındaki dosyaları (mp3, m4a, wma...) Windows'un kendi oynatıcısıyla (MCI) çalar."""
+    mci_durdur()
+    if _mci(f'open "{yol}" type mpegvideo alias ezan_ses'):
+        return False
+    _mci(f"setaudio ezan_ses volume to {round(1000 * (max(0, min(volume, 100)) / 100) ** 2)}")
+    return _mci("play ezan_ses") == 0
+
+
 def ses_cal(sound, sound_file, volume):
+    mci_durdur()
+    if sound == "custom" and sound_file and not sound_file.lower().endswith(".wav"):
+        winsound.PlaySound(None, 0)
+        if not (os.path.exists(sound_file) and mci_cal(sound_file, volume)):
+            threading.Thread(target=winsound.Beep, args=(880, 400), daemon=True).start()
+        return
+
     def calistir():
         try:
             _ses_cal(sound, sound_file, volume)
@@ -1418,11 +1534,15 @@ class EzanVakti:
         self.root.bind("<ButtonPress-1>", self.drag_start)
         self.root.bind("<B1-Motion>", self.drag_move)
         self.root.bind("<ButtonRelease-1>", self.drag_end)
-        self.root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
+        self.root.bind("<Button-3>", self.menu_ac)
         self.root.bind("<Double-Button-1>", lambda e: self.open_settings())  # menüyü bulamayanlar için
         self.root.bind("<Control-MouseWheel>", self.wheel_resize)
 
+        onceki = on_pencere()
         self.apply_config()
+        self.root.update_idletasks()
+        odak_almasin(self.root)
+        odagi_geri_ver(onceki)
         self.root.after(100, self.poll)
         self.tick()
         if not self.cfg["district_url"]:
@@ -1768,6 +1888,11 @@ class EzanVakti:
         if self.settings and self.settings.win.winfo_exists():
             self.settings.mod.set("extended" if self.cfg["expanded"] else "compact")
 
+    def menu_ac(self, e):
+        # Kullanıcı bilerek sağ tıkladı: menü düzgün kapanabilsin diye yalnızca bu an odağı al
+        _user32.SetForegroundWindow(_hwnd(self.root))
+        self.menu.tk_popup(e.x_root, e.y_root)
+
     def wheel_resize(self, e):
         yeni = self.cfg["size"] + (1 if e.delta > 0 else -1)
         self.cfg["size"] = max(BOYUT_MIN, min(BOYUT_MAX, yeni))
@@ -1854,6 +1979,7 @@ class EzanVakti:
         days, hicri = sonuc
         if self.cache.get("district_id") != self.cfg["district_id"]:
             self.cache = {"district_id": self.cfg["district_id"], "days": {}}
+            self.saat_dilimi_uyarildi = False  # yeni şehir: uyarı bu oturumda daha önce gösterildiyse de yine göster
         self.cache["days"].update(days)
         self.cache.setdefault("hijri", {}).update(hicri)
         # 40 günden eski kayıtları sil
@@ -1924,9 +2050,10 @@ class EzanVakti:
             self.guncelleme_denetle()
         self.update_display()
         self.tick_count += 1
-        if self.tick_count % 10 == 0:  # başka pencereler öne geçse de üstte kal
-            self.root.attributes("-topmost", True)
-            self.root.lift()
+        if self.tick_count % 10 == 0:  # başka pencereler öne geçse de üstte kal (odak almadan)
+            ustte_tut(self.root)
+            if self.balon and self.balon.acik():
+                ustte_tut(self.balon.win)
         self.root.after(1000 - simdi().microsecond // 1000 + 5, self.tick)
 
     def update_display(self):
@@ -2166,6 +2293,7 @@ class EzanVakti:
 
     def quit(self):
         winsound.PlaySound(None, 0)
+        mci_durdur()
         self.root.destroy()
 
     def run(self):
@@ -2188,6 +2316,7 @@ class HadisBalonu:
         renk, s = app.colors, app.cfg["size"]
         self.icerik, self.kapaniyor = icerik, False
         self.bitis = time.monotonic() + sure_ms / 1000
+        onceki = on_pencere()
         w = self.win = tk.Toplevel(app.root)
         w.overrideredirect(True)
         w.attributes("-topmost", True)
@@ -2221,6 +2350,9 @@ class HadisBalonu:
         sol, _, sag, _ = calisma_alani(mx + mw // 2, app._pos[1])
         self.sag_hizali = mx + mw / 2 > (sol + sag) / 2
         self.konumla()
+        w.update_idletasks()
+        odak_almasin(w)
+        odagi_geri_ver(onceki)  # balon oyun oynarken açılırsa odak oyunda kalsın
 
         # pencereye bağlı olay tuvalde de çalışır; tikla verildiyse (güncelleme) kapanırken o da yapılır
         w.bind("<Button-1>", lambda e: (self.kapat(hizli=True), tikla and tikla()))
@@ -2286,6 +2418,60 @@ class Secim:
         self.cb.current(self.kimlikler.index(kimlik))
 
 
+def arama_bicimi(metin):
+    """Harf aramasında karşılaştırma için: Türkçe büyük harf, işaretsiz (ç→C, ı/i→I, ü→U ...)."""
+    metin = metin.replace("i", "İ").replace("ı", "I").upper()
+    return metin.translate(str.maketrans("ÇĞİÖŞÜÂÎÛ", "CGIOSUAIU"))
+
+
+class HarfleAtla:
+    """Salt okunur açılır listede bir harfe basınca o harfle başlayan öğeye gider. Hızlı yazılan
+    harfler birleşir ("tu" → TUNUS), aynı harfe tekrar basınca o harfle başlayan sonrakine geçer.
+    Liste açıkken de kapalıyken de çalışır."""
+
+    def __init__(self, cb):
+        self.cb, self.yazilan, self.son, self.bekleyen = cb, "", 0.0, None
+        cb.bind("<KeyPress>", self.kapaliyken)
+        self.liste = cb.tk.call("ttk::combobox::PopdownWindow", cb) + ".f.l"
+        cb.tk.call("bind", self.liste, "<KeyPress>", "+" + cb.register(self.acikken) + " %A")
+
+    def bul(self, harf, simdiki):
+        if not harf or not harf.isprintable() or (harf == " " and not self.yazilan):
+            return None
+        an = time.monotonic()
+        self.yazilan = (self.yazilan if an - self.son < 1.0 else "") + arama_bicimi(harf)
+        self.son = an
+        adlar = [arama_bicimi(a) for a in self.cb["values"]]
+        if not adlar:
+            return None
+        tek = len(set(self.yazilan)) == 1  # "aaa": a ile başlayanlar arasında dolaş
+        aranan = self.yazilan[0] if tek else self.yazilan
+        basla = simdiki + 1 if tek else max(simdiki, 0)
+        for k in range(len(adlar)):
+            i = (basla + k) % len(adlar)
+            if adlar[i].startswith(aranan):
+                return i
+        return None
+
+    def kapaliyken(self, e):
+        i = self.bul(e.char, self.cb.current())
+        if i is None:
+            return None
+        self.cb.current(i)
+        # ülke/il seçimi internetten liste çeker: hızlı yazarken her harfte değil, durunca seç
+        if self.bekleyen:
+            self.cb.after_cancel(self.bekleyen)
+        self.bekleyen = self.cb.after(400, lambda: self.cb.event_generate("<<ComboboxSelected>>"))
+        return "break"
+
+    def acikken(self, harf):
+        secili = self.cb.tk.call(self.liste, "curselection")
+        i = self.bul(harf, int(secili[0]) if secili else -1)
+        if i is not None:
+            for komut in (("selection", "clear", 0, "end"), ("selection", "set", i), ("see", i), ("activate", i)):
+                self.cb.tk.call(self.liste, *komut)
+
+
 class AyarlarPenceresi:
     def __init__(self, app):
         self.app = app
@@ -2333,6 +2519,7 @@ class AyarlarPenceresi:
         ttk.Label(f, text=t("district")).grid(row=2, column=0, sticky="w", **pad)
         self.ilce_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
         self.ilce_cb.grid(row=2, column=1, **pad)
+        self._harf_arama = [HarfleAtla(cb) for cb in (self.ulke_cb, self.il_cb, self.ilce_cb)]
         self.tz_lbl = ttk.Label(f, foreground="#b3261e", wraplength=330, justify="left")
         self.tz_lbl.grid(row=3, column=0, columnspan=2, sticky="w", padx=8)
         self.saat_dilimi_etiketi()
@@ -2542,7 +2729,7 @@ class AyarlarPenceresi:
         if self.ses.get() == "custom":
             t = self.app.t
             yol = filedialog.askopenfilename(parent=self.win, title=t("pick_wav"),
-                                             filetypes=[(t("wav_type"), "*.wav")])
+                                             filetypes=[(t("wav_type"), SES_UZANTILARI)])
             if yol:
                 self.ses_dosyasi = yol
             elif not self.ses_dosyasi:

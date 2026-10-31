@@ -1,0 +1,7 @@
+# .exe dosyası depoya değil, GitHub "Releases" sayfasına yüklenir
+*.exe
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc

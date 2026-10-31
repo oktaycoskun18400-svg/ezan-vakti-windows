@@ -8,6 +8,7 @@ Ctrl + fare tekerleği: boyut, sağ tık: menü (ayarlar, çıkış).
 import ctypes
 import ctypes.wintypes as wt
 import datetime as dt
+import hashlib
 import html
 import json
 import math
@@ -15,12 +16,14 @@ import os
 import queue
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
 import urllib.parse
 import urllib.request
 import wave
+import webbrowser
 import winreg
 import winsound
 from array import array
@@ -34,9 +37,16 @@ CONFIG_FILE = os.path.join(DATA_DIR, "ayarlar.json")
 CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
+# Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
+SURUM = "0.4.0"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/1.1"}
+HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
+# Güncellemeler yalnızca bu GitHub deposunun sürümlerinden indirilir
+GITHUB_DEPO = "oktaycoskun18400-svg/ezan-vakti-windows"
+GUNCELLEME_API = f"https://api.github.com/repos/{GITHUB_DEPO}/releases/latest"
+GUNCELLEME_ONEKI = f"https://github.com/{GITHUB_DEPO}/releases/download/"
+EXE_ADI = "EzanVakti.exe"
 
 VAKITLER = ["İmsak", "Güneş", "Öğle", "İkindi", "Akşam", "Yatsı"]
 VAKIT_EN = {"İmsak": "Fajr", "Güneş": "Sunrise", "Öğle": "Dhuhr",
@@ -121,6 +131,19 @@ METINLER = {
     "hadith_title": ("HADİS-İ ŞERİF", "HADITH"),
     "hadith_wait": ("Hadisler indiriliyor, biraz sonra tekrar deneyin.",
                     "Hadiths are being downloaded, please try again shortly."),
+    "menu_update": ("Güncellemeleri denetle", "Check for updates"),
+    "upd_title": ("GÜNCELLEME", "UPDATE"),
+    "upd_available": ("Yeni sürüm {v} hazır. Güncellemek için buraya tıklayın.",
+                      "Version {v} is available. Click here to update."),
+    "upd_downloading": ("Yeni sürüm indiriliyor ve doğrulanıyor…", "Downloading and verifying the new version…"),
+    "upd_failed": ("Güncelleme kurulamadı; mevcut sürüm çalışmaya devam ediyor. İndirme sayfası açılıyor.",
+                   "The update couldn't be installed; the current version keeps running. "
+                   "Opening the download page."),
+    "upd_check_failed": ("Güncellemeler denetlenemedi. İnternet bağlantısını kontrol edin.",
+                         "Couldn't check for updates. Check your internet connection."),
+    "upd_none": ("Ezan Vakti güncel (sürüm {v}).", "Prayer Times is up to date (version {v})."),
+    "auto_update": ("Güncellemeleri otomatik denetle", "Check for updates automatically"),
+    "version": ("Sürüm", "Version"),
     "hadith_frame": (" Hadis ", " Hadith "),
     "hadith_alert": ("Vakte belirlenen süre kala hadis göster", "Show a hadith before the prayer time"),
     "hadith_time": ("Vakit girdiğinde hadis göster", "Show a hadith when the prayer time begins"),
@@ -180,6 +203,7 @@ VARSAYILAN_AYARLAR = {
     "calc": "diyanet",
     "hadis_uyari": True,  # vakte alarm_minutes kala hadis göster
     "hadis_vakit": True,  # vakit girdiğinde hadis göster
+    "guncelleme_otomatik": True, "guncelleme_son_kontrol": "",
 }
 # Vakit hesap yöntemleri: (Türkçe ad, İngilizce ad, kısa Türkçe, kısa İngilizce)
 HESAPLAR = {
@@ -1006,10 +1030,70 @@ def kaynak_yolu(dosya):
     return os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), dosya)
 
 
-def tek_kopya_mi():
-    """Uygulama zaten açıksa False döner."""
-    ctypes.windll.kernel32.CreateMutexW(None, False, "Local\\EzanVaktiTekKopya")
-    return ctypes.windll.kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+def tek_kopya_mi(bekle_sn=0):
+    """Uygulama zaten açıksa False döner.
+
+    bekle_sn: güncellemeden sonra yeniden başlarken eski sürüm kapanana kadar bu kadar bekler.
+    """
+    k32 = ctypes.windll.kernel32
+    k32.CreateMutexW.restype = wt.HANDLE
+    son = time.monotonic() + bekle_sn
+    while True:
+        tutamak = k32.CreateMutexW(None, False, "Local\\EzanVaktiTekKopya")
+        if k32.GetLastError() != 183:  # ERROR_ALREADY_EXISTS değilse bu kopya tek
+            return True
+        k32.CloseHandle(tutamak)
+        if time.monotonic() >= son:
+            return False
+        time.sleep(0.2)
+
+
+# ---------------------------------------------------------------- güncelleme
+
+def surum_tuple(metin):
+    return tuple(int(x) for x in re.findall(r"\d+", metin)[:3])
+
+
+def son_surum_bilgisi():
+    """GitHub'daki en son sürüm: {"surum", "url", "boyut", "sha256", "sayfa"}."""
+    veri = json.loads(http_get(GUNCELLEME_API))
+    exe = next(a for a in veri.get("assets", []) if a.get("name") == EXE_ADI)
+    sha = (exe.get("digest") or "").removeprefix("sha256:").lower()
+    if not sha:  # GitHub parmak izi vermezse sürümle yüklenen .sha256 dosyasına bak
+        ek = next((a for a in veri["assets"] if a.get("name") == EXE_ADI + ".sha256"), None)
+        sha = http_get(ek["browser_download_url"]).split()[0].lower() if ek else ""
+    return {"surum": veri["tag_name"].lstrip("vV"), "url": exe["browser_download_url"],
+            "boyut": int(exe["size"]), "sha256": sha, "sayfa": veri["html_url"]}
+
+
+def guncellemeyi_indir(bilgi, hedef):
+    """Yeni .exe'yi hedef + '.new' olarak indirir; boyutu ve SHA-256 parmak izi tutmazsa hata verir."""
+    if not bilgi["url"].startswith(GUNCELLEME_ONEKI) or not re.fullmatch(r"[0-9a-f]{64}", bilgi["sha256"]):
+        raise ValueError("Güvenilmeyen güncelleme bilgisi")
+    yeni = hedef + ".new"
+    ozet = hashlib.sha256()
+    req = urllib.request.Request(bilgi["url"], headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=60) as r, open(yeni, "wb") as f:
+        while parca := r.read(1 << 16):
+            f.write(parca)
+            ozet.update(parca)
+    if os.path.getsize(yeni) != bilgi["boyut"] or ozet.hexdigest() != bilgi["sha256"]:
+        os.remove(yeni)
+        raise ValueError("İndirilen dosya doğrulanamadı")
+    return yeni
+
+
+def guncellemeyi_kur(yeni, hedef):
+    """Çalışan .exe'nin yerine yenisini koyar (çalışan dosya silinemez ama yeniden adlandırılabilir)."""
+    eski = hedef + ".old"
+    if os.path.exists(eski):
+        os.remove(eski)
+    os.replace(hedef, eski)
+    try:
+        os.replace(yeni, hedef)
+    except OSError:
+        os.replace(eski, hedef)  # yenisi konamadıysa eskisini geri koy
+        raise
 
 
 def baslangic_komutu():
@@ -1245,6 +1329,8 @@ class EzanVakti:
         self.hadis_fired = set()
         self.hadis_hedef = None
         self.balon = None
+        self.guncelleme_suruyor = False
+        self.acilis_zamani = time.monotonic()
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -1319,6 +1405,7 @@ class EzanVakti:
                                   command=self.toggle_expanded)
         self.menu.add_command(label=self.t("menu_hadith"), command=lambda: self.hadis_goster(manuel=True))
         self.menu.add_command(label=self.t("menu_refresh"), command=lambda: self.fetch(force=True))
+        self.menu.add_command(label=self.t("menu_update"), command=lambda: self.guncelleme_denetle(manuel=True))
         self.menu.add_separator()
         self.menu.add_command(label=self.t("menu_quit"), command=self.quit)
 
@@ -1759,6 +1846,11 @@ class EzanVakti:
     def tick(self):
         if self.need_fetch():
             self.fetch()
+        # Günde bir kez, açılıştan 1 dakika sonra (açılışı yavaşlatmasın) güncelleme denetimi
+        if (self.cfg["guncelleme_otomatik"] and not self.guncelleme_suruyor
+                and self.cfg["guncelleme_son_kontrol"] != dt.date.today().isoformat()
+                and time.monotonic() - self.acilis_zamani > 60):
+            self.guncelleme_denetle()
         self.update_display()
         self.tick_count += 1
         if self.tick_count % 10 == 0:  # başka pencereler öne geçse de üstte kal
@@ -1821,6 +1913,58 @@ class EzanVakti:
         self.saat_dilimi_uyarildi = True
         self.balon_ac(("tz",))
 
+    # -------------------------------------------------- güncelleme
+
+    def guncelleme_denetle(self, manuel=False):
+        """GitHub'da daha yeni sürüm var mı? Varsa tıklanınca güncelleyen bir balon gösterir."""
+        if self.guncelleme_suruyor:
+            return
+        self.guncelleme_suruyor = True
+        self.run_bg(son_surum_bilgisi, lambda b, h: self.guncelleme_geldi(b, h, manuel))
+
+    def guncelleme_geldi(self, bilgi, hata, manuel):
+        self.guncelleme_suruyor = False
+        if hata:
+            if manuel:
+                self.balon_ac(("bilgi", "upd_title", "upd_check_failed"))
+            else:  # internet yoksa bugün bir daha zorlamasın; sonraki açılış ya da yarın denenir
+                self.cfg["guncelleme_son_kontrol"] = dt.date.today().isoformat()
+            return
+        self.cfg["guncelleme_son_kontrol"] = dt.date.today().isoformat()
+        self.save_config()
+        if surum_tuple(bilgi["surum"]) > surum_tuple(SURUM):
+            self.balon_ac(("guncelleme", bilgi), sure_ms=30000)
+        elif manuel:
+            self.balon_ac(("bilgi", "upd_title", "upd_none"))
+
+    def guncelle(self, bilgi):
+        """Kullanıcı balona tıkladı: indir, doğrula, eskisinin yerine koy ve yeniden başlat."""
+        if not getattr(sys, "frozen", False):  # .py olarak çalışıyorsa sadece sayfayı aç
+            webbrowser.open(bilgi["sayfa"])
+            return
+        self.guncelleme_suruyor = True
+        self.balon_ac(("bilgi", "upd_title", "upd_downloading"), sure_ms=120000)
+        self.run_bg(guncellemeyi_indir, lambda yol, h: self.guncelleme_indi(bilgi, yol, h),
+                    bilgi, sys.executable)
+
+    def guncelleme_indi(self, bilgi, yeni, hata):
+        self.guncelleme_suruyor = False
+        try:
+            if hata:
+                raise hata
+            guncellemeyi_kur(yeni, sys.executable)
+            subprocess.Popen([sys.executable, "--guncellendi"], close_fds=True)
+        except Exception:
+            if yeni and os.path.exists(yeni):
+                try:
+                    os.remove(yeni)
+                except OSError:
+                    pass
+            self.balon_ac(("bilgi", "upd_title", "upd_failed"))
+            webbrowser.open(bilgi["sayfa"])
+            return
+        self.quit()  # yeni sürüm, bu kopya kapanınca açılacak (tek_kopya_mi bekler)
+
     # -------------------------------------------------- balon
 
     def balon_ac(self, icerik, sure_ms=HADIS_SURE_MS):
@@ -1828,17 +1972,25 @@ class EzanVakti:
         if self.balon:
             self.balon.kapat(aninda=True)
         en = self.cfg["language"] == "en"
+        tikla = None
         if icerik[0] == "tz":
             baslik, metin, kaynak = self.t("tz_title"), self.t("tz_warn"), ""
         elif icerik[0] == "bekle":
             baslik, metin, kaynak = self.t("hadith_title"), self.t("hadith_wait"), ""
+        elif icerik[0] == "bilgi":  # ("bilgi", başlık anahtarı, metin anahtarı)
+            baslik, metin, kaynak = self.t(icerik[1]), self.t(icerik[2]).format(v=SURUM), ""
+        elif icerik[0] == "guncelleme":
+            bilgi = icerik[1]
+            baslik, kaynak = self.t("upd_title"), f"{SURUM} → {bilgi['surum']}"
+            metin = self.t("upd_available").format(v=bilgi["surum"])
+            tikla = lambda: self.guncelle(bilgi)
         else:
             _, kitap, numara = icerik
             dil = "en" if en else "tr"
             baslik = self.t("hadith_title")
             metin = hadis_ozu(self.hadisler[f"{kitap}:{numara}"][dil], dil)
             kaynak = hadis_kaynagi(kitap, numara, en)
-        self.balon = HadisBalonu(self, baslik, metin, kaynak, icerik, sure_ms)
+        self.balon = HadisBalonu(self, baslik, metin, kaynak, icerik, sure_ms, tikla)
 
     def balonu_yenile(self):
         """Dil ya da görünüm değişti: açık balonu aynı içerik ve kalan süreyle yeniden çiz."""
@@ -1948,7 +2100,7 @@ class HadisBalonu:
 
     SOLMA_MS, SOLMA_HIZLI_MS, SOLMA_ADIM = 500, 200, 12
 
-    def __init__(self, app, baslik, metin, kaynak, icerik=None, sure_ms=HADIS_SURE_MS):
+    def __init__(self, app, baslik, metin, kaynak, icerik=None, sure_ms=HADIS_SURE_MS, tikla=None):
         renk, s = app.colors, app.cfg["size"]
         self.icerik, self.kapaniyor = icerik, False
         self.bitis = time.monotonic() + sure_ms / 1000
@@ -1986,7 +2138,8 @@ class HadisBalonu:
         self.sag_hizali = mx + mw / 2 > (sol + sag) / 2
         self.konumla()
 
-        w.bind("<Button-1>", lambda e: self.kapat(hizli=True))  # pencereye bağlı olay tuvalde de çalışır
+        # pencereye bağlı olay tuvalde de çalışır; tikla verildiyse (güncelleme) kapanırken o da yapılır
+        w.bind("<Button-1>", lambda e: (self.kapat(hizli=True), tikla and tikla()))
         w.after(max(0, int(sure_ms)), self.kapat)
 
     def konumla(self):
@@ -2120,6 +2273,11 @@ class AyarlarPenceresi:
         self.autostart = tk.BooleanVar(value=c["autostart"])
         ttk.Checkbutton(f, text=t("autostart"), variable=self.autostart) \
             .grid(row=1, column=0, columnspan=2, sticky="w", **pad)
+        self.guncelleme_otomatik = tk.BooleanVar(value=c["guncelleme_otomatik"])
+        ttk.Checkbutton(f, text=t("auto_update"), variable=self.guncelleme_otomatik) \
+            .grid(row=2, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(f, text=f"{t('version')} {SURUM}", foreground="#666") \
+            .grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4))
 
         # ---- Uyarı sekmesi
         f = sekme(t("tab_alarm"))
@@ -2384,6 +2542,7 @@ class AyarlarPenceresi:
                  volume=self.ses_seviyesi.get(),
                  hadis_uyari=self.hadis_uyari.get(), hadis_vakit=self.hadis_vakit.get(),
                  language=self.dil.get(), autostart=self.autostart.get(),
+                 guncelleme_otomatik=self.guncelleme_otomatik.get(),
                  calc=self.hesap.get(),
                  **self.gorunum_secimleri())
         try:
@@ -2406,8 +2565,14 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # yazılar bulanık olmasın
     except (AttributeError, OSError):
         pass
-    if not tek_kopya_mi():
+    # Güncellemeden sonra açılıyorsa eski sürümün kapanmasını bekle
+    if not tek_kopya_mi(bekle_sn=15 if "--guncellendi" in sys.argv else 0):
         return
+    if getattr(sys, "frozen", False):  # önceki güncellemeden kalan eski .exe'yi temizle
+        try:
+            os.remove(sys.executable + ".old")
+        except OSError:
+            pass
     try:  # görev çubuğunda Python'un değil uygulamanın kendi ikonu görünsün
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("EzanVakti.App")
     except (AttributeError, OSError):

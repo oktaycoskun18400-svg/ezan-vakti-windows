@@ -38,7 +38,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 # Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
-SURUM = "0.5.1.1"
+SURUM = "0.5.1.2"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
@@ -1794,7 +1794,7 @@ class EzanVakti:
         renk, s = self.colors, self.cfg["size"]
         kalin, ince = self.font(s, True), self.font(s)
         minik = self.font(s * 0.65)
-        isim = self.vakit_adi(ad)
+        isim = self.ana_metin(ad, "").strip()  # diğer stillerle aynı: "İkindiye" / "Asr in"
         bosluk = s * 0.5
         hilal_r = s * 0.62
         icerik = 2 * hilal_r + bosluk + ince.measure(isim) + bosluk + kalin.measure(sure)
@@ -1813,7 +1813,7 @@ class EzanVakti:
             pad = ust_h / 2
             w = icerik + 2 * pad
 
-        # üst satır: ☾ İkindi 0:12
+        # üst satır: ☾ İkindiye 0:12
         x = pad if not expanded else (w - icerik) / 2
         orta = ust_h / 2
         anahtar = (round(hilal_r, 1), renk["warn"], renk["bg"])

@@ -334,6 +334,12 @@ def onceki_vakit(days, now):
             zaman = dt.datetime.combine(tarih, dt.time(h, m))
             if zaman <= now:
                 return zaman
+    # Gece yarısından sonra dünkü yatsı gerekir; dünün vakitleri kayıtlı değilse (vakitler bugünden
+    # itibaren indirilir) bugünkü yatsıyla tahmin et, günden güne en fazla bir iki dakika değişir.
+    bugunku = days.get(now.date().isoformat())
+    if bugunku:
+        h, m = map(int, bugunku[-1].split(":"))
+        return dt.datetime.combine(now.date() - dt.timedelta(days=1), dt.time(h, m))
     return None
 
 

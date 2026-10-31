@@ -38,7 +38,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 # Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
-SURUM = "0.4.0"
+SURUM = "0.4.1"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
@@ -872,10 +872,61 @@ def astronomik_vakitler(gun, enlem, fark, yontem, ramazan=False):
     return [metin(s) for s in (imsak, gunes, oglen, ikindi, aksam, yatsi)]
 
 
+# Saat ve saat dilimi her seferinde doğrudan Windows'tan okunur. Python'un kendi saat
+# fonksiyonları saat dilimini program açılırken bir kez öğrenir; uygulama açıkken Windows'ta saat
+# dilimi değiştirilirse eski dilimle devam ederler.
+
+class SYSTEMTIME(ctypes.Structure):
+    _fields_ = [(ad, wt.WORD) for ad in ("wYear", "wMonth", "wDayOfWeek", "wDay",
+                                         "wHour", "wMinute", "wSecond", "wMilliseconds")]
+
+
+class DYNAMIC_TIME_ZONE_INFORMATION(ctypes.Structure):
+    _fields_ = [("Bias", wt.LONG), ("StandardName", wt.WCHAR * 32), ("StandardDate", SYSTEMTIME),
+                ("StandardBias", wt.LONG), ("DaylightName", wt.WCHAR * 32), ("DaylightDate", SYSTEMTIME),
+                ("DaylightBias", wt.LONG), ("TimeZoneKeyName", wt.WCHAR * 128),
+                ("DynamicDaylightTimeDisabled", wt.BOOLEAN)]
+
+
+_k32 = ctypes.windll.kernel32
+
+
+def windows_saat_dilimi():
+    """Windows'ta şu an seçili saat dilimi (her çağrıda güncel)."""
+    bilgi = DYNAMIC_TIME_ZONE_INFORMATION()
+    _k32.GetDynamicTimeZoneInformation(ctypes.byref(bilgi))
+    return bilgi
+
+
+def simdi():
+    """Windows'un şu anki yerel saati (saat dilimi değişse bile anında güncel)."""
+    st = SYSTEMTIME()
+    _k32.GetLocalTime(ctypes.byref(st))
+    return dt.datetime(st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds * 1000)
+
+
+def bugun():
+    return simdi().date()
+
+
+def saat_dilimi_imzasi():
+    """Saat dilimi değişti mi diye karşılaştırmak için kısa bir özet."""
+    bilgi = windows_saat_dilimi()
+    return bilgi.TimeZoneKeyName, bilgi.Bias, bool(bilgi.DynamicDaylightTimeDisabled)
+
+
 def pc_utc_farki(gun):
-    """Bilgisayarın (Windows saat dilimi ayarının) o gün öğle vaktindeki UTC farkı, saat cinsinden."""
-    an = time.mktime((gun.year, gun.month, gun.day, 12, 0, 0, 0, 0, -1))
-    return time.localtime(an).tm_gmtoff / 3600
+    """Bilgisayarın (Windows saat dilimi ayarının) o gün öğle vaktindeki UTC farkı, saat cinsinden.
+    Windows'un o yıla ait yaz saati kurallarıyla hesaplanır."""
+    utc = SYSTEMTIME(wYear=gun.year, wMonth=gun.month, wDay=gun.day, wHour=12)
+    yerel = SYSTEMTIME()
+    if not _k32.SystemTimeToTzSpecificLocalTimeEx(ctypes.byref(windows_saat_dilimi()), ctypes.byref(utc),
+                                                  ctypes.byref(yerel)):
+        an = time.mktime((gun.year, gun.month, gun.day, 12, 0, 0, 0, 0, -1))  # yedek yol
+        return time.localtime(an).tm_gmtoff / 3600
+    fark = dt.datetime(yerel.wYear, yerel.wMonth, yerel.wDay, yerel.wHour, yerel.wMinute) - \
+        dt.datetime(gun.year, gun.month, gun.day, 12)
+    return fark.total_seconds() / 3600
 
 
 def saat_dilimi_uyumsuz(ulke_id, gunler):
@@ -889,8 +940,8 @@ def saat_dilimi_uyumsuz(ulke_id, gunler):
     if not gunler:
         return False
     if ulke_id == TURKIYE[1]:
-        bugun = dt.date.today()
-        return any(abs(pc_utc_farki(bugun + dt.timedelta(days=i)) - 3) > 0.01 for i in range(0, 366, 7))
+        ilk = bugun()
+        return any(abs(pc_utc_farki(ilk + dt.timedelta(days=i)) - 3) > 0.01 for i in range(0, 366, 7))
     farklar = []
     for tarih in sorted(gunler)[::7]:
         try:
@@ -1331,6 +1382,7 @@ class EzanVakti:
         self.balon = None
         self.guncelleme_suruyor = False
         self.acilis_zamani = time.monotonic()
+        self.saat_dilimi = saat_dilimi_imzasi()
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -1776,7 +1828,7 @@ class EzanVakti:
         if self.fetching or not self.cfg["district_url"]:
             return
         self.fetching = True
-        self.last_attempt = dt.datetime.now()
+        self.last_attempt = simdi()
         self.run_bg(get_vakitler, lambda r, e: self.fetched(r, e, force), self.cfg["district_url"])
 
     def fetched(self, sonuc, error, force):
@@ -1791,10 +1843,10 @@ class EzanVakti:
         self.cache["days"].update(days)
         self.cache.setdefault("hijri", {}).update(hicri)
         # 40 günden eski kayıtları sil
-        sinir = (dt.date.today() - dt.timedelta(days=40)).isoformat()
+        sinir = (bugun() - dt.timedelta(days=40)).isoformat()
         self.cache["days"] = {k: v for k, v in self.cache["days"].items() if k >= sinir}
         self.cache["hijri"] = {k: v for k, v in self.cache["hijri"].items() if k >= sinir}
-        self.cache["fetched"] = dt.date.today().isoformat()
+        self.cache["fetched"] = bugun().isoformat()
         save_json(CACHE_FILE, self.cache)
         self.update_display()
         self.saat_dilimi_uyar()  # yeni şehrin vakitleri geldi: saat dilimi uyuşuyor mu?
@@ -1806,9 +1858,9 @@ class EzanVakti:
             return False
         if self.cache.get("district_id") != self.cfg["district_id"]:
             return True
-        if self.last_attempt and dt.datetime.now() - self.last_attempt < dt.timedelta(minutes=10):
+        if self.last_attempt and simdi() - self.last_attempt < dt.timedelta(minutes=10):
             return False
-        return self.cache.get("fetched") != dt.date.today().isoformat()
+        return self.cache.get("fetched") != bugun().isoformat()
 
     def days(self):
         if self.cache.get("district_id") != self.cfg["district_id"]:
@@ -1825,13 +1877,13 @@ class EzanVakti:
         if enlem is None:
             return gunler
         # Sadece dün, bugün ve yarın hesaplanır; gün değişene kadar saklanır
-        bugun = dt.date.today()
-        anahtar = (konum_anahtar, yontem, bugun)
+        gun0 = bugun()
+        anahtar = (konum_anahtar, yontem, gun0)
         if self._hesaplanan[0] != anahtar:
             hicri = self.cache.get("hijri", {})
             hesap = {}
             for gun_farki in (-1, 0, 1):
-                gun = bugun + dt.timedelta(days=gun_farki)
+                gun = gun0 + dt.timedelta(days=gun_farki)
                 diyanet = gunler.get(gun.isoformat())
                 if not diyanet:
                     continue
@@ -1844,11 +1896,16 @@ class EzanVakti:
     # -------------------------------------------------- her saniye
 
     def tick(self):
+        if self.tick_count % 2 == 0:  # Windows'ta saat dilimi değiştirildi mi? (çok hafif bir kontrol)
+            imza = saat_dilimi_imzasi()
+            if imza != self.saat_dilimi:
+                self.saat_dilimi = imza
+                self.saat_dilimi_degisti()
         if self.need_fetch():
             self.fetch()
         # Günde bir kez, açılıştan 1 dakika sonra (açılışı yavaşlatmasın) güncelleme denetimi
         if (self.cfg["guncelleme_otomatik"] and not self.guncelleme_suruyor
-                and self.cfg["guncelleme_son_kontrol"] != dt.date.today().isoformat()
+                and self.cfg["guncelleme_son_kontrol"] != bugun().isoformat()
                 and time.monotonic() - self.acilis_zamani > 60):
             self.guncelleme_denetle()
         self.update_display()
@@ -1856,10 +1913,10 @@ class EzanVakti:
         if self.tick_count % 10 == 0:  # başka pencereler öne geçse de üstte kal
             self.root.attributes("-topmost", True)
             self.root.lift()
-        self.root.after(1000 - dt.datetime.now().microsecond // 1000 + 5, self.tick)
+        self.root.after(1000 - simdi().microsecond // 1000 + 5, self.tick)
 
     def update_display(self):
-        now = dt.datetime.now()
+        now = simdi()
         days = self.days()
         hedef = siradaki_vakit(days, now)
 
@@ -1906,6 +1963,19 @@ class EzanVakti:
         gunler = self.cache.get("days", {}) if self.cache.get("district_id") == self.cfg["district_id"] else {}
         return bool(self.cfg["district_url"]) and saat_dilimi_uyumsuz(self.cfg["country_id"], gunler)
 
+    def saat_dilimi_degisti(self):
+        """Windows'ta saat dilimi değişti: sayacı yeni saate göre çiz, uyarıyı yeniden değerlendir."""
+        self.last_view = None
+        self._hesaplanan = (None, {})
+        self.saat_dilimi_uyarildi = False
+        if self.saat_dilimi_sorunlu():
+            self.saat_dilimi_uyar()
+        elif self.balon and self.balon.acik() and self.balon.icerik == ("tz",):
+            self.balon.kapat()  # artık uyuşuyor: açık uyarıyı kaldır
+        if self.settings and self.settings.win.winfo_exists():
+            self.settings.saat_dilimi_etiketi()
+        self.update_display()
+
     def saat_dilimi_uyar(self):
         """Bilgisayarın saat dilimi şehirle uyuşmuyorsa oturum başına bir kez küçük bir uyarı göster."""
         if self.saat_dilimi_uyarildi or not self.saat_dilimi_sorunlu():
@@ -1928,9 +1998,9 @@ class EzanVakti:
             if manuel:
                 self.balon_ac(("bilgi", "upd_title", "upd_check_failed"))
             else:  # internet yoksa bugün bir daha zorlamasın; sonraki açılış ya da yarın denenir
-                self.cfg["guncelleme_son_kontrol"] = dt.date.today().isoformat()
+                self.cfg["guncelleme_son_kontrol"] = bugun().isoformat()
             return
-        self.cfg["guncelleme_son_kontrol"] = dt.date.today().isoformat()
+        self.cfg["guncelleme_son_kontrol"] = bugun().isoformat()
         self.save_config()
         if surum_tuple(bilgi["surum"]) > surum_tuple(SURUM):
             self.balon_ac(("guncelleme", bilgi), sure_ms=30000)

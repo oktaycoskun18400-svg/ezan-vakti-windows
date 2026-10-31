@@ -11,7 +11,7 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 <a href="../../releases/latest"><b>⬇ İndir (EzanVakti.exe)</b></a>
 </p>
 
-<p align="center"><img src="docs/ekran.png" alt="Kart, Hap ve Klasik stiller"></p>
+<p align="center"><img src="docs/ekran.png" alt="Levha, Hilal ve Takvim stilleri"></p>
 
 ## Özellikler
 
@@ -30,7 +30,7 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
   - Ses seviyesi ayarlanır.
   - Basit sesler ve makam ezgileri (Hicaz, Uşşak, Rast) arasından seçilir; istenirse kendi ses dosyan da (mp3, wav, m4a, wma...) kullanılır.
 - **Hadis balonu:** Kütüb-i Sitte'den namaz, oruç, abdest, sadaka, zikir ve güzel ahlak konularında kısa hadisler gösterilir.
-- **3 stil:** Kart, Hap ve Klasik
+- **3 stil:** Levha, Hilal ve Takvim
 - **4 renk:** Koyu, Açık, Yeşil, Lacivert
 - **Saydamlık seçenekleri,** "sadece yazı" modu dahil
 - **Serbest boyut:** ayarlardan ya da pencere üzerinde `Ctrl` + fare tekerleği ile

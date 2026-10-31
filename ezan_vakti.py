@@ -97,7 +97,8 @@ SESLER = {
     "custom": ("Kendi ses dosyam (mp3, wav...)", "My own sound file (mp3, wav...)"),
 }
 ONIZLEME_AYARLARI = ("style", "expanded", "theme", "opacity", "size")
-STILLER = {"kart": ("Kart", "Card"), "hap": ("Hap", "Pill"), "klasik": ("Klasik", "Classic")}
+# kimlikler ayar dosyasında saklandığı için değişmez, sadece görünen adlar değişebilir
+STILLER = {"kart": ("Levha", "Plaque"), "hap": ("Hilal", "Crescent"), "klasik": ("Takvim", "Almanac")}
 MODLAR = {"compact": ("Kompakt (sadece kalan süre)", "Compact (time left only)"),
           "extended": ("Genişletilmiş (kalan süre + tüm vakitler)", "Extended (time left + all times)")}
 SNAP = 18  # kenara bu kadar pikselden yakınsa yapışır

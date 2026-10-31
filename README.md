@@ -86,6 +86,8 @@ Bu uygulama gönüllü olarak geliştirilmiş, resmi olmayan bir projedir ve Diy
 
 Hadis metinleri uygulamanın içinde yer almaz. Uygulamada yalnızca seçilen hadislerin kaynak bilgisi (kitap ve numara) bulunur. Türkçe ve İngilizce metinler ilk kullanımda açık [hadith-api](https://github.com/fawazahmed0/hadith-api) veri setinden indirilir ve bilgisayarda saklanır (yaklaşık 75 KB). Çevirilerin hakları ilgili çevirmenlere aittir.
 
+Ekran görüntüsünün arka planındaki Selimiye Camii fotoğrafı [Dosseman](https://commons.wikimedia.org/wiki/File:Edirne_Selimiye_Mosque_Exterior_NW_corner_in_2006_2406.jpg) tarafından çekilmiştir ve [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) lisanslıdır. Fotoğrafın üzerine lacivert bir katman ve uygulama görüntüleri eklendi. `docs/ekran.png` de aynı lisansla paylaşılır.
+
 ---
 
 ## English

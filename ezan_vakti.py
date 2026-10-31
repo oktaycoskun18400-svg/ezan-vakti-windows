@@ -43,6 +43,20 @@ YONELME = {"İmsak": "İmsaka", "Güneş": "Güneşe", "Öğle": "Öğleye",
            "İkindi": "İkindiye", "Akşam": "Akşama", "Yatsı": "Yatsıya"}
 AYLAR = {"Ocak": 1, "Şubat": 2, "Mart": 3, "Nisan": 4, "Mayıs": 5, "Haziran": 6,
          "Temmuz": 7, "Ağustos": 8, "Eylül": 9, "Ekim": 10, "Kasım": 11, "Aralık": 12}
+GUN_ADLARI = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+AY_EN = ["January", "February", "March", "April", "May", "June", "July",
+         "August", "September", "October", "November", "December"]
+GUN_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+HICRI_AY_EN = {"Muharrem": "Muharram", "Safer": "Safar", "Rebiülevvel": "Rabi al-Awwal",
+               "Rebiülahir": "Rabi al-Akhir", "Cemaziyelevvel": "Jumada al-Ula",
+               "Cemaziyelahir": "Jumada al-Akhirah", "Recep": "Rajab", "Şaban": "Sha'ban",
+               "Ramazan": "Ramadan", "Şevval": "Shawwal", "Zilkade": "Dhu al-Qa'dah",
+               "Zilhicce": "Dhu al-Hijjah"}
+# Dar pencerelerde kullanılan kısa hicrî ay adları
+HICRI_AY_KISA = {"Rebiülevvel": "R.evvel", "Rebiülahir": "R.ahir", "Cemaziyelevvel": "C.evvel",
+                 "Cemaziyelahir": "C.ahir", "Rabi al-Awwal": "Rabi I", "Rabi al-Akhir": "Rabi II",
+                 "Jumada al-Ula": "Jumada I", "Jumada al-Akhirah": "Jumada II",
+                 "Dhu al-Qa'dah": "Dhu'l-Qa'dah", "Dhu al-Hijjah": "Dhu'l-Hijjah"}
 
 DILLER = {"tr": ("Türkçe", "Türkçe"), "en": ("English", "English")}
 TEMALAR = {
@@ -88,6 +102,10 @@ METINLER = {
     "tab_alarm": ("Sesli uyarı", "Sound alert"),
     "tab_look": ("Görünüm", "Appearance"),
     "style": ("Stil:", "Style:"),
+    "calc_frame": (" Vakit hesabı ", " Prayer times "),
+    "calc": ("Hesap:", "Times:"),
+    "calc_hint": ("Diğer yöntemler, ilçenin konumuna göre astronomik olarak hesaplanır.",
+                  "Other methods are calculated astronomically for the district's location."),
     "ok": ("Tamam", "OK"),
     "apply": ("Uygula", "Apply"),
     "saved": ("Kaydedildi ✓", "Saved ✓"),
@@ -140,6 +158,19 @@ VARSAYILAN_AYARLAR = {
     "style": "kart", "theme": "Koyu", "opacity": "Yarı saydam", "size": 13,
     "x": None, "y": None, "snap_x": "right", "snap_y": "bottom",
     "expanded": False, "autostart": False,
+    "calc": "diyanet",
+}
+# Vakit hesap yöntemleri: (Türkçe ad, İngilizce ad, kısa Türkçe, kısa İngilizce)
+HESAPLAR = {
+    "diyanet": ("Diyanet (resmi vakitler)", "Diyanet (official times)", "", ""),
+    "ummulkura": ("Ümmü'l-Kurâ (Mekke)", "Umm al-Qura (Makkah)", "Ümmü'l-Kurâ", "Umm al-Qura"),
+    "misir": ("Mısır Genel Araştırma Kurumu", "Egyptian General Authority", "Mısır", "Egypt"),
+}
+# Astronomik yöntemlerin açıları: fecir (imsak) ve yatsı için güneşin ufkun kaç derece altında olduğu.
+# Ümmü'l-Kurâ'da yatsı açıyla değil, akşamdan sabit dakika sonra (Ramazan'da daha geç) girer.
+YONTEMLER = {
+    "ummulkura": {"fecir": 18.5, "yatsi_dk": 90, "yatsi_dk_ramazan": 120},
+    "misir": {"fecir": 19.5, "yatsi": 17.5},
 }
 
 
@@ -159,6 +190,9 @@ def eski_ayarlari_cevir(cfg):
         cfg["opacity"] = "Yarı saydam"
     if cfg["language"] not in DILLER:
         cfg["language"] = "tr"
+    if cfg["calc"] not in HESAPLAR:
+        cfg["calc"] = "diyanet"
+    cfg.pop("temkin", None)
     return cfg
 
 
@@ -205,23 +239,27 @@ def get_ilceler(state_id):
 
 
 SATIR_RE = re.compile(
-    r"<tr>\s*<td>\s*(\d{1,2})\s+(\w+)\s+(\d{4})[^<]*</td>\s*<td>[^<]*</td>"
+    r"<tr>\s*<td>\s*(\d{1,2})\s+(\w+)\s+(\d{4})[^<]*</td>\s*<td>([^<]*)</td>"
     r"((?:\s*<td>\s*\d{1,2}:\d{2}\s*</td>){6})")
 
 
 def get_vakitler(district_url):
-    """Diyanet sayfasındaki tablodan {"2026-10-31": ["06:01", ...6 vakit], ...} döner."""
+    """Diyanet sayfasındaki tablodan vakitleri ve hicrî tarihleri okur.
+
+    ({"2026-10-31": ["06:01", ...6 vakit], ...}, {"2026-10-31": "20 Cemaziyelevvel 1448", ...}) döner.
+    """
     page = html.unescape(http_get(BASE_URL + district_url))
-    days = {}
+    days, hicri = {}, {}
     for m in SATIR_RE.finditer(page):
         ay = AYLAR.get(m.group(2))
         if not ay:
             continue
-        tarih = dt.date(int(m.group(3)), ay, int(m.group(1)))
-        days[tarih.isoformat()] = re.findall(r"\d{1,2}:\d{2}", m.group(4))
+        tarih = dt.date(int(m.group(3)), ay, int(m.group(1))).isoformat()
+        days[tarih] = re.findall(r"\d{1,2}:\d{2}", m.group(5))
+        hicri[tarih] = m.group(4).strip()
     if not days:
         raise ValueError("Diyanet sayfasında vakit tablosu bulunamadı.")
-    return days
+    return days, hicri
 
 
 def onceki_vakit(days, now):
@@ -252,6 +290,119 @@ def siradaki_vakit(days, now):
             if zaman > now:
                 return ad, zaman
     return None
+
+
+# ---------------------------------------------------------------- astronomik hesap
+# Ümmü'l-Kurâ ve Mısır yöntemleri için güneşin konumundan vakit hesabı.
+# Türkiye saati UTC+3 (yaz saati uygulanmıyor).
+
+SAAT_DILIMI = 3
+DIYANET_GUNES_TEMKIN = 7 / 60  # Diyanet güneşi 7 dk erken, akşamı 7 dk geç verir (saat)
+
+
+def _julyen(gun):
+    """Tarihin UTC gece yarısındaki Jülyen günü."""
+    y, m = gun.year, gun.month
+    if m <= 2:
+        y, m = y - 1, m + 12
+    a = y // 100
+    return int(365.25 * (y + 4716)) + int(30.6001 * (m + 1)) + gun.day + 2 - a + a // 4 - 1524.5
+
+
+def _gunes(jd):
+    """Güneşin deklinasyonu (radyan) ve zaman denklemi (saat)."""
+    d = jd - 2451545.0
+    g = math.radians((357.529 + 0.98560028 * d) % 360)
+    q = (280.459 + 0.98564736 * d) % 360
+    boylam = math.radians((q + 1.915 * math.sin(g) + 0.020 * math.sin(2 * g)) % 360)
+    egim = math.radians(23.439 - 0.00000036 * d)
+    ra = math.degrees(math.atan2(math.cos(egim) * math.sin(boylam), math.cos(boylam))) / 15 % 24
+    return math.asin(math.sin(egim) * math.sin(boylam)), (q / 15 - ra + 12) % 24 - 12
+
+
+def _saat_acisi(yukseklik, deklinasyon, enlem):
+    """Güneşin verilen yüksekliğe (derece) geldiği an ile öğle arasındaki süre (saat)."""
+    x = ((math.sin(math.radians(yukseklik)) - math.sin(deklinasyon) * math.sin(enlem))
+         / (math.cos(deklinasyon) * math.cos(enlem)))
+    return math.degrees(math.acos(max(-1.0, min(1.0, x)))) / 15
+
+
+def astronomik_vakitler(gun, enlem, boylam, yontem, ramazan=False):
+    """Verilen gün için 6 vakti ["HH:MM", ...] olarak hesaplar."""
+    ayar = YONTEMLER[yontem]
+    jd0 = _julyen(gun)
+    enlem_r = math.radians(enlem)
+
+    def gunes_an(saat):
+        return _gunes(jd0 + (saat - SAAT_DILIMI) / 24)
+
+    def ogle(saat):
+        return 12 + SAAT_DILIMI - boylam / 15 - gunes_an(saat)[1]
+
+    def vakit(saat, yukseklik, yon):
+        # iki tur: önce tahmini saatte, sonra bulunan saatte güneşin konumuyla
+        for _ in range(2):
+            dek = gunes_an(saat)[0]
+            if yukseklik == "ikindi":  # cismin gölgesi kendi boyu + öğle gölgesi kadar
+                yuk = math.degrees(math.atan(1 / (1 + math.tan(abs(enlem_r - dek)))))
+            else:
+                yuk = yukseklik
+            saat = ogle(saat) + yon * _saat_acisi(yuk, dek, enlem_r)
+        return saat
+
+    oglen = ogle(12)
+    imsak = vakit(5, -ayar["fecir"], -1)
+    gunes = vakit(6, -0.833, -1)
+    ikindi = vakit(15, "ikindi", 1)
+    aksam = vakit(18, -0.833, 1)
+    if "yatsi" in ayar:
+        yatsi = vakit(20, -ayar["yatsi"], 1)
+    else:
+        yatsi = aksam + (ayar["yatsi_dk_ramazan"] if ramazan else ayar["yatsi_dk"]) / 60
+
+    def metin(saat):
+        dk = min(23 * 60 + 59, max(0, round(saat * 60)))
+        return f"{dk // 60:02d}:{dk % 60:02d}"
+    return [metin(s) for s in (imsak, gunes, oglen, ikindi, aksam, yatsi)]
+
+
+def konum_tahmini(gunler):
+    """Diyanet'in güneş doğuşu/batışı saatlerinden ilçenin (enlem, boylam) tahmini.
+
+    Doğuşla batışın ortası gerçek öğledir (boylamı verir); gün uzunluğu enlemi verir.
+    Ekinoks yakınında gün uzunluğu enlemden pek etkilenmediği için o günler kullanılmaz.
+    """
+    boylamlar, enlemler = [], []
+    for tarih, saatler in gunler.items():
+        try:
+            gun = dt.date.fromisoformat(tarih)
+            dogus = int(saatler[1][:2]) + int(saatler[1][3:]) / 60 + DIYANET_GUNES_TEMKIN
+            batis = int(saatler[4][:2]) + int(saatler[4][3:]) / 60 - DIYANET_GUNES_TEMKIN
+        except (ValueError, IndexError):
+            continue
+        orta = (dogus + batis) / 2
+        dek, zd = _gunes(_julyen(gun) + (orta - SAAT_DILIMI) / 24)
+        boylamlar.append(15 * (12 + SAAT_DILIMI - zd - orta))
+        if abs(math.degrees(dek)) < 12:
+            continue
+        hedef = math.cos(math.radians(15 * (batis - dogus) / 2))
+        alt, ust = -65.0, 65.0
+        for _ in range(40):  # ikiye bölme ile enlemi bul
+            orta_enlem = (alt + ust) / 2
+            e = math.radians(orta_enlem)
+            deger = ((math.sin(math.radians(-0.833)) - math.sin(dek) * math.sin(e))
+                     / (math.cos(dek) * math.cos(e)))
+            # kuzey yarımkürede yazın enlem arttıkça gün uzar (deger azalır)
+            if (deger > hedef) == (dek > 0):
+                alt = orta_enlem
+            else:
+                ust = orta_enlem
+        enlemler.append((alt + ust) / 2)
+    if not boylamlar or not enlemler:
+        return None
+    boylamlar.sort()
+    enlemler.sort()
+    return enlemler[len(enlemler) // 2], boylamlar[len(boylamlar) // 2]
 
 
 # ---------------------------------------------------------------- çizim yardımcıları
@@ -561,6 +712,8 @@ class EzanVakti:
         self.peeking = False  # kompakt modda basılı tutarken geçici genişletme
         self.last_view = None
         self.fonts = {}
+        self._hesaplanan = (None, {})  # (anahtar, astronomik yöntemle hesaplanmış vakitler)
+        self._konum = (None, None)  # (anahtar, ilçenin tahmini (enlem, boylam))
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -674,11 +827,52 @@ class EzanVakti:
         if not self.with_bg:
             return
         c, renk = self.canvas, self.colors
+        # pencere tam piksele yukarı yuvarlanır (render); çerçeve son pikselin içinde kalsın
+        w, h = math.ceil(w), math.ceil(h)
         if yaricap:
             oge = yuvarlak_kutu(c, 0, 0, w - 1, h - 1, yaricap, fill=renk["bg"], outline=renk["line"])
         else:
             oge = c.create_rectangle(0, 0, w - 1, h - 1, fill=renk["bg"], outline=renk["sub"])
         c.tag_lower(oge)
+
+    def tarih_satirlari(self, gun):
+        """Tek satırlık tarih seçenekleri, uzundan kısaya; sığan ilki gösterilir.
+
+        Önce "31 Ekim 2026 · 20 Cemaziyelevvel 1448", sonra kısa biçimler
+        ("31.10.2026 · 20 C.evvel 1448"), en son sadece hicrî tarih.
+        """
+        hicri = self.cache.get("hijri", {}).get(gun.isoformat(), "") \
+            if self.cache.get("district_id") == self.cfg["district_id"] else ""
+        if self.cfg["language"] == "en":
+            for tr, en in HICRI_AY_EN.items():
+                hicri = hicri.replace(tr, en)
+            uzun = f"{gun.day} {AY_EN[gun.month - 1][:3]} {gun.year}"
+        else:
+            uzun = f"{gun.day} {list(AYLAR)[gun.month - 1]} {gun.year}"
+        kisa = f"{gun.day:02d}.{gun.month:02d}.{gun.year}"
+        if not hicri:
+            return uzun, kisa
+        hicri_kisa = hicri
+        for uzun_ad, kisa_ad in HICRI_AY_KISA.items():
+            hicri_kisa = hicri_kisa.replace(uzun_ad, kisa_ad)
+        return (f"{uzun} · {hicri}", f"{kisa} · {hicri}", f"{uzun} · {hicri_kisa}",
+                f"{kisa} · {hicri_kisa}", hicri, hicri_kisa)
+
+    def alt_bilgi(self, view, x, y, anchor, font, genislik):
+        """Tarihi (sığan biçimiyle) ve konumu yazar; yeni y değerini döner."""
+        secenekler = view[7]
+        tarih = next((m for m in secenekler if font.measure(m) <= genislik), secenekler[-1])
+        satir = font.metrics("linespace")
+        for metin in (tarih, self.konum_adi()):
+            self.yazi(x, y, metin, font, self.colors["sub"], anchor)
+            y += satir
+        return y
+
+    def alt_bilgi_genislik(self, view, font):
+        # pencere en fazla "31.10.2026 · 20 C.evvel 1448" sığacak kadar genişler
+        secenekler = view[7]
+        tarih = secenekler[3] if len(secenekler) == 6 else secenekler[-1]
+        return max(font.measure(tarih), font.measure(self.konum_adi()))
 
     def ana_metin(self, ad, sure):
         if self.cfg["language"] == "en":
@@ -692,7 +886,7 @@ class EzanVakti:
         else:
             ciz = {"kart": self.ciz_kart, "hap": self.ciz_hap}.get(self.cfg["style"], self.ciz_klasik)
             w, h = ciz(view, expanded)
-        self.canvas.configure(width=int(w), height=int(h))
+        self.canvas.configure(width=math.ceil(w), height=math.ceil(h))
 
     def ciz_mesaj(self, metin):
         s = self.cfg["size"]
@@ -704,7 +898,7 @@ class EzanVakti:
         return w, h
 
     def ciz_klasik(self, view, expanded):
-        _, ad, sure, yakin, _, saatler, gecmis = view
+        _, ad, sure, yakin, _, saatler, gecmis, _ = view
         renk, s = self.colors, self.cfg["size"]
         ana, kucuk, minik = self.font(s, True), self.font(s * 0.8), self.font(s * 0.65)
         pad = s * 0.75 + 2
@@ -713,7 +907,8 @@ class EzanVakti:
         satir = kucuk.metrics("linespace")
         if expanded:
             adlar = max(kucuk.measure(self.vakit_adi(v)) for v in VAKITLER)
-            w = max(w, adlar + kucuk.measure("00:00") + 3 * pad)
+            w = max(w, adlar + kucuk.measure("00:00") + 3 * pad,
+                    self.alt_bilgi_genislik(view, minik) + 2 * pad)
         y = max(2, s // 4)
         self.yazi(w / 2, y, metin, ana, renk["warn"] if yakin else renk["fg"], "n")
         y += ana.metrics("linespace") + max(2, s // 4)
@@ -723,14 +918,12 @@ class EzanVakti:
                 self.yazi(pad, y, self.vakit_adi(v), kucuk, r)
                 self.yazi(w - pad, y, saatler[i] if saatler else "--:--", kucuk, r, "ne")
                 y += satir
-            y += 2
-            self.yazi(w / 2, y, self.konum_adi(), minik, renk["sub"], "n")
-            y += minik.metrics("linespace") + s // 3
+            y = self.alt_bilgi(view, w / 2, y + 2, "n", minik, w - 2 * pad) + s // 3
         self.zemin(w, y, 0)
         return w, y
 
     def ciz_kart(self, view, expanded):
-        _, ad, sure, yakin, ilerleme, saatler, gecmis = view
+        _, ad, sure, yakin, ilerleme, saatler, gecmis, _ = view
         renk, s = self.colors, self.cfg["size"]
         etiket_f, buyuk = self.font(s * 0.72, True), self.font(s * 1.7, True)
         satir_f, satir_kalin = self.font(s * 0.85), self.font(s * 0.85, True)
@@ -743,7 +936,7 @@ class EzanVakti:
         ic = max(etiket_f.measure(etiket), buyuk.measure(sure), s * 6)
         if expanded:
             adlar = max(satir_kalin.measure(self.vakit_adi(v)) for v in VAKITLER)
-            ic = max(ic, adlar + satir_kalin.measure("00:00") + s * 2, minik.measure(self.konum_adi()))
+            ic = max(ic, adlar + satir_kalin.measure("00:00") + s * 2, self.alt_bilgi_genislik(view, minik))
         w = ic + 2 * pad
 
         y = pad * 0.6
@@ -770,17 +963,16 @@ class EzanVakti:
                 self.yazi(pad, y, self.vakit_adi(v), f, r)
                 self.yazi(w - pad, y, saatler[i] if saatler else "--:--", f, r, "ne")
                 y += satir
-            y += s * 0.35
-            self.yazi(pad, y, self.konum_adi(), minik, renk["sub"])
-            y += minik.metrics("linespace") + pad * 0.5
+            y = self.alt_bilgi(view, pad, y + s * 0.35, "nw", minik, ic) + pad * 0.5
         h = y
         self.zemin(w, h, s * 0.9)
         return w, h
 
     def ciz_hap(self, view, expanded):
-        _, ad, sure, yakin, _, saatler, gecmis = view
+        _, ad, sure, yakin, _, saatler, gecmis, _ = view
         renk, s = self.colors, self.cfg["size"]
         kalin, ince = self.font(s, True), self.font(s)
+        minik = self.font(s * 0.65)
         isim = self.vakit_adi(ad)
         bosluk = s * 0.5
         hilal_r = s * 0.62
@@ -794,7 +986,8 @@ class EzanVakti:
         ara = s * 0.3
         if expanded:
             pad = s * 0.7
-            w = max(icerik + 2 * pad, 3 * hucre_w + 2 * ara + 2 * pad)
+            w = max(icerik + 2 * pad, 3 * hucre_w + 2 * ara + 2 * pad,
+                    self.alt_bilgi_genislik(view, minik) + 2 * pad)
         else:
             pad = ust_h / 2
             w = icerik + 2 * pad
@@ -833,7 +1026,7 @@ class EzanVakti:
             self.yazi(cx, sy + s * 0.25, self.vakit_adi(v), f, r, "n")
             self.yazi(cx, sy + s * 0.25 + hucre_f.metrics("linespace"),
                       saatler[i] if saatler else "--:--", f, r, "n")
-        h = y0 + 2 * hucre_h + ara + pad
+        h = self.alt_bilgi(view, w / 2, y0 + 2 * hucre_h + ara + s * 0.4, "n", minik, w - 2 * pad) + pad * 0.7
         self.zemin(w, h, s * 0.9)
         return w, h
 
@@ -841,7 +1034,10 @@ class EzanVakti:
         if not self.cfg["district_name"]:
             return ""
         il, ilce = self.cfg["state_name"], self.cfg["district_name"]
-        return il if il == ilce else f"{ilce} / {il}"
+        ad = il if il == ilce else f"{ilce} / {il}"
+        if self.cfg["calc"] != "diyanet":
+            ad += " · " + HESAPLAR[self.cfg["calc"]][2 + (self.cfg["language"] == "en")]
+        return ad
 
     def place_window(self):
         """Pencereyi kayıtlı yerine koyar; bir kenara yapışıksa o kenarda tutar."""
@@ -864,6 +1060,7 @@ class EzanVakti:
             y = alt - h
         x = max(sol, min(x, sag - w))
         y = max(ust, min(y, alt - h))
+        self._pos = (x, y)
         self.root.geometry(f"+{x}+{y}")
 
     def toggle_expanded(self):
@@ -882,7 +1079,7 @@ class EzanVakti:
     # -------------------------------------------------- sürükleme ve kenara yapışma
 
     def drag_start(self, e):
-        self._drag = (e.x_root, e.y_root, self.root.winfo_x(), self.root.winfo_y())
+        self._drag = (e.x_root, e.y_root) + self._pos
         self._moved = False
         self._snap = (self.cfg["snap_x"], self.cfg["snap_y"])
         self._hold_job = self.root.after(BASILI_TUTMA_MS, self.held)
@@ -893,6 +1090,9 @@ class EzanVakti:
         if not self.cfg["expanded"]:
             self.peeking = True
             self.apply_config()
+            # pencere büyüyüp yer değiştirmiş olabilir: sürükleme buradan devam etsin
+            px, py = self.root.winfo_pointerxy()
+            self._drag = (px, py) + self._pos
 
     def cancel_hold(self):
         if getattr(self, "_hold_job", None):
@@ -903,11 +1103,8 @@ class EzanVakti:
         sx, sy, wx, wy = self._drag
         dx, dy = e.x_root - sx, e.y_root - sy
         if not self._moved and abs(dx) + abs(dy) > SURUKLEME_ESIGI:
-            # sürükleme başladı: bekleyen ya da açılmış geçici görünümü iptal et
+            # sürükleme başladı; açılmış geçici görünüm bırakılana kadar açık kalır
             self.cancel_hold()
-            if self.peeking:
-                self.peeking = False
-                self.apply_config()
             self._moved = True
             self.dragging = True
         if not self._moved:
@@ -925,18 +1122,19 @@ class EzanVakti:
         elif abs(y + h - alt) <= SNAP:
             y, snap_y = alt - h, "bottom"
         self._snap = (snap_x, snap_y)
+        self._pos = (x, y)
         self.root.geometry(f"+{x}+{y}")
 
     def drag_end(self, e):
         self.cancel_hold()
         self.dragging = False
-        if self.peeking:
-            self.peeking = False
-            self.apply_config()
         if self._moved:
-            self.cfg["x"], self.cfg["y"] = self.root.winfo_x(), self.root.winfo_y()
+            self.cfg["x"], self.cfg["y"] = self._pos
             self.cfg["snap_x"], self.cfg["snap_y"] = self._snap
             self.save_config()
+        if self.peeking:  # geçici görünümü kapat; pencere yapıştığı kenarda küçülür
+            self.peeking = False
+            self.apply_config()
 
     # -------------------------------------------------- vakitler
 
@@ -947,18 +1145,21 @@ class EzanVakti:
         self.last_attempt = dt.datetime.now()
         self.run_bg(get_vakitler, lambda r, e: self.fetched(r, e, force), self.cfg["district_url"])
 
-    def fetched(self, days, error, force):
+    def fetched(self, sonuc, error, force):
         self.fetching = False
         if error:
             if force:
                 messagebox.showerror(self.t("app"), f"{self.t('fetch_err')}\n{error}")
             return
+        days, hicri = sonuc
         if self.cache.get("district_id") != self.cfg["district_id"]:
             self.cache = {"district_id": self.cfg["district_id"], "days": {}}
         self.cache["days"].update(days)
+        self.cache.setdefault("hijri", {}).update(hicri)
         # 40 günden eski kayıtları sil
         sinir = (dt.date.today() - dt.timedelta(days=40)).isoformat()
         self.cache["days"] = {k: v for k, v in self.cache["days"].items() if k >= sinir}
+        self.cache["hijri"] = {k: v for k, v in self.cache["hijri"].items() if k >= sinir}
         self.cache["fetched"] = dt.date.today().isoformat()
         save_json(CACHE_FILE, self.cache)
         self.update_display()
@@ -975,7 +1176,29 @@ class EzanVakti:
     def days(self):
         if self.cache.get("district_id") != self.cfg["district_id"]:
             return {}
-        return self.cache.get("days", {})
+        gunler = self.cache.get("days", {})
+        yontem = self.cfg["calc"]
+        if yontem not in YONTEMLER or not gunler:
+            return gunler
+        # İlçenin konumu Diyanet vakitlerinden bir kez çıkarılır
+        konum_anahtar = (self.cfg["district_id"], id(gunler))
+        if self._konum[0] != konum_anahtar:
+            self._konum = (konum_anahtar, konum_tahmini(gunler))
+        if not self._konum[1]:
+            return gunler
+        # Sadece dün, bugün ve yarın hesaplanır; gün değişene kadar saklanır
+        bugun = dt.date.today()
+        anahtar = (konum_anahtar, yontem, bugun)
+        if self._hesaplanan[0] != anahtar:
+            enlem, boylam = self._konum[1]
+            hicri = self.cache.get("hijri", {})
+            hesap = {}
+            for fark in (-1, 0, 1):
+                gun = bugun + dt.timedelta(days=fark)
+                ramazan = "Ramazan" in hicri.get(gun.isoformat(), "")
+                hesap[gun.isoformat()] = astronomik_vakitler(gun, enlem, boylam, yontem, ramazan)
+            self._hesaplanan = (anahtar, hesap)
+        return self._hesaplanan[1]
 
     # -------------------------------------------------- her saniye
 
@@ -1001,7 +1224,7 @@ class EzanVakti:
         else:
             ad, zaman = hedef
             kalan = (zaman - now).total_seconds()
-            dakika = math.ceil(kalan / 60)
+            dakika = int(kalan // 60)  # tam dakika: 27 dk 12 sn kaldıysa 27 gösterilir
             sure = f"{dakika // 60}:{dakika % 60:02d}"
             uyari_suresi = self.cfg["alarm_minutes"] * 60
             yakin = self.cfg["alarm_on"] and ad in self.cfg["alarm_vakitler"] and kalan <= uyari_suresi
@@ -1015,7 +1238,7 @@ class EzanVakti:
                 gecmis = tuple(dt.datetime.combine(now.date(), dt.time(*map(int, s.split(":")))) <= now
                                for s in saatler)
                 saatler = tuple(saatler)
-            view = ("vakit", ad, sure, yakin, ilerleme, saatler, gecmis)
+            view = ("vakit", ad, sure, yakin, ilerleme, saatler, gecmis, self.tarih_satirlari(now.date()))
 
         # Sadece görünen bir şey değiştiyse yeniden çiz (her saniye çizmemek için)
         expanded = self.cfg["expanded"] or self.peeking
@@ -1104,8 +1327,9 @@ class AyarlarPenceresi:
         tk.Label(ust, image=self._baslik_hilal, bg=yesil).pack(side="left", padx=(16, 8), pady=12)
         tk.Label(ust, text=t("app"), bg=yesil, fg="#eafff4",
                  font=("Segoe UI", 14, "bold")).pack(side="left")
-        tk.Label(ust, text=app.konum_adi(), bg=yesil, fg=TEMALAR["Yeşil"]["sub"],
-                 font=("Segoe UI", 10)).pack(side="right", padx=16)
+        self.baslik_konum = tk.Label(ust, text=app.konum_adi(), bg=yesil, fg=TEMALAR["Yeşil"]["sub"],
+                                     font=("Segoe UI", 10))
+        self.baslik_konum.pack(side="right", padx=16)
 
         nb = ttk.Notebook(w)
         nb.pack(fill="both", expand=True, padx=12, pady=(12, 0))
@@ -1128,6 +1352,14 @@ class AyarlarPenceresi:
         self.il_cb.set(t("loading"))
         self.il_cb.bind("<<ComboboxSelected>>", lambda e: self.il_secildi())
         self.iller, self.ilceler = [], []
+
+        f = ttk.LabelFrame(genel, text=t("calc_frame"), padding=6)
+        f.pack(fill="x", pady=(10, 0))
+        ttk.Label(f, text=t("calc")).grid(row=0, column=0, sticky="w", **pad)
+        self.hesap = Secim(f, HESAPLAR, c["calc"], en, width=30)
+        self.hesap.cb.grid(row=0, column=1, sticky="w", **pad)
+        ttk.Label(f, text=t("calc_hint"), foreground="#666") \
+            .grid(row=1, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4))
 
         f = ttk.LabelFrame(genel, text=t("other"), padding=6)
         f.pack(fill="x", pady=(10, 0))
@@ -1322,6 +1554,7 @@ class AyarlarPenceresi:
             self.app.open_settings()
             return
         self.orijinal = {k: self.app.cfg[k] for k in ONIZLEME_AYARLARI}
+        self.baslik_konum.configure(text=self.app.konum_adi())
         self.durum_lbl.configure(text=self.app.t("saved"))
         self.win.after(2000, lambda: self.win.winfo_exists() and self.durum_lbl.configure(text=""))
 
@@ -1352,6 +1585,7 @@ class AyarlarPenceresi:
                  sound=self.ses.get(), sound_file=self.ses_dosyasi,
                  volume=self.ses_seviyesi.get(),
                  language=self.dil.get(), autostart=self.autostart.get(),
+                 calc=self.hesap.get(),
                  **self.gorunum_secimleri())
         try:
             windows_ile_baslat(c["autostart"])

@@ -16,8 +16,14 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 ## Özellikler
 
 - **Sıradaki vakte kalan süre**, örneğin `İkindiye 0:12`
-- **Genişletilmiş mod:** kalan süre ile birlikte günün tüm vakitleri
+- **Genişletilmiş mod:** kalan süre ile birlikte günün tüm vakitleri, miladî ve hicrî tarih
 - **Türkiye'deki tüm il ve ilçeler**
+- **3 hesap yöntemi:**
+  - Diyanet (varsayılan, resmî vakitler)
+  - Ümmü'l-Kurâ (Mekke)
+  - Mısır Genel Araştırma Kurumu
+
+  Diğer iki yöntem, ilçenin konumuna göre astronomik olarak hesaplanır.
 - **Sesli uyarı:**
   - Vakte kaç dakika kala çalacağı ve hangi vakitlerde çalacağı ayarlanır.
   - Ses seviyesi ayarlanır.
@@ -50,7 +56,7 @@ Uygulama yeni ve dijital imzası olmadığı için Windows ve tarayıcılar uyar
 | İşlem | Nasıl |
 |---|---|
 | Taşımak | Pencereyi sürükle (ekran kenarlarına yapışır) |
-| Tüm vakitlere göz atmak | Küçük moddayken pencereyi yerinde basılı tut |
+| Tüm vakitlere göz atmak | Küçük moddayken pencereyi yerinde basılı tut (basılıyken sürüklenebilir) |
 | Boyutu değiştirmek | Pencere üzerinde `Ctrl` + fare tekerleği |
 | Ayarlar ve çıkış | Sağ tık |
 

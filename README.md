@@ -38,8 +38,12 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 2. Çift tıkla. Kurulum gerekmez.
 3. Açılan ayarlar penceresinden il ve ilçeni seç.
 
-> Windows "Windows kişisel bilgisayarınızı korudu" uyarısı gösterebilir. Bu, imzasız programlarda olağan bir uyarıdır.
-> **Ek bilgi → Yine de çalıştır** ile açabilirsin.
+### Güvenlik uyarısı çıkarsa
+
+Uygulama yeni ve dijital imzası olmadığı için Windows ve tarayıcılar uyarı gösterebilir. Bu, az indirilmiş imzasız programlarda olağan bir durumdur. Uygulamanın kaynak kodunun tamamı bu sayfada açık.
+
+- **İndirirken** (Edge / Chrome: *"EzanVakti.exe isn't commonly downloaded"*): indirilen dosyanın yanındaki **⋯** menüsünden **Sakla (Keep)** seç. Bir uyarı daha çıkarsa **Daha fazla göster → Yine de sakla** de.
+- **Açarken** (*"Windows kişisel bilgisayarınızı korudu"*): **Ek bilgi → Yine de çalıştır**.
 
 ## Kullanım
 
@@ -64,7 +68,7 @@ python ezan_vakti.py
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name EzanVakti --icon ikon.ico --add-data "ikon.ico;." ezan_vakti.py
+pyinstaller --onefile --windowed --name EzanVakti --icon ikon.ico --add-data "ikon.ico;." --version-file surum_bilgisi.txt ezan_vakti.py
 ```
 
 ## Not

@@ -1,9 +1,9 @@
-﻿# PyInstaller sürüm bilgisi: .exe dosyasının Özellikler > Ayrıntılar sekmesinde görünür.
+# PyInstaller sürüm bilgisi: .exe dosyasının Özellikler > Ayrıntılar sekmesinde görünür.
 # Yeni sürümde filevers/prodvers ve FileVersion/ProductVersion değerlerini güncelle.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 4, 1, 0),
-    prodvers=(0, 4, 1, 0),
+    filevers=(0, 5, 0, 0),
+    prodvers=(0, 5, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
       StringTable('041F04B0', [
         StringStruct('CompanyName', 'oktaycoskun18400-svg'),
         StringStruct('FileDescription', 'Ezan Vakti - ezan vakti sayacı'),
-        StringStruct('FileVersion', '0.4.1'),
+        StringStruct('FileVersion', '0.5.0'),
         StringStruct('InternalName', 'EzanVakti'),
         StringStruct('LegalCopyright', '© 2026 oktaycoskun18400-svg - MIT Lisansı'),
         StringStruct('OriginalFilename', 'EzanVakti.exe'),
         StringStruct('ProductName', 'Ezan Vakti'),
-        StringStruct('ProductVersion', '0.4.1'),
+        StringStruct('ProductVersion', '0.5.0'),
         StringStruct('Comments', 'https://github.com/oktaycoskun18400-svg/ezan-vakti-windows')
       ])
     ]),

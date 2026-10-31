@@ -38,7 +38,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 # Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
-SURUM = "0.4.1"
+SURUM = "0.5.0"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
@@ -75,8 +75,9 @@ TEMALAR = {
     "Koyu":     {"bg": "#1e1e1e", "fg": "#f2f2f2", "sub": "#9a9a9a", "warn": "#ffb020"},
     "Açık":     {"bg": "#f7f7f7", "fg": "#1e1e1e", "sub": "#6a6a6a", "warn": "#d05a00"},
     "Yeşil":    {"bg": "#0f3d2e", "fg": "#eafff4", "sub": "#8fc7ad", "warn": "#ffd166"},
-    "Lacivert": {"bg": "#14213d", "fg": "#f1f4ff", "sub": "#9aa6c7", "warn": "#fca311"},
+    "Lacivert": {"bg": "#1b2a4a", "fg": "#f3f1ea", "sub": "#a3adc6", "warn": "#d6a84c"},
 }
+VARSAYILAN_TEMA = "Lacivert"  # logodaki lacivert ve altın
 TEMA_ADLARI = {"Koyu": ("Koyu", "Dark"), "Açık": ("Açık", "Light"),
                "Yeşil": ("Yeşil", "Green"), "Lacivert": ("Lacivert", "Navy")}
 SAYDAMLIK = {"Opak": 1.0, "Yarı saydam": 0.75, "Çok saydam": 0.5, "Saydam (sadece yazı)": None}
@@ -197,7 +198,7 @@ VARSAYILAN_AYARLAR = {
     "alarm_on": True, "alarm_minutes": 10, "alarm_at_time": True,
     "alarm_vakitler": ["İmsak", "Öğle", "İkindi", "Akşam", "Yatsı"],
     "sound": "zil", "sound_file": "", "volume": 80,
-    "style": "kart", "theme": "Koyu", "opacity": "Yarı saydam", "size": 13,
+    "style": "kart", "theme": VARSAYILAN_TEMA, "opacity": "Yarı saydam", "size": 13,
     "x": None, "y": None, "snap_x": "right", "snap_y": "bottom",
     "expanded": False, "autostart": False,
     "calc": "diyanet",
@@ -234,7 +235,7 @@ def eski_ayarlari_cevir(cfg):
     if cfg["style"] not in STILLER:
         cfg["style"] = "kart"
     if cfg["theme"] not in TEMALAR:
-        cfg["theme"] = "Koyu"
+        cfg["theme"] = VARSAYILAN_TEMA
     if cfg["opacity"] not in SAYDAMLIK:
         cfg["opacity"] = "Yarı saydam"
     if cfg["language"] not in DILLER:
@@ -1020,8 +1021,21 @@ def hilal_icinde(x, y, R):
     return x * x + y * y <= R * R and (x - ox) ** 2 + (y - oy) ** 2 > r * r
 
 
-def hilal_resmi(R, renk, zemin):
-    """Kenarları yumuşatılmış hilal resmi (dışı saydam). Kenarlar zemin rengine karışır."""
+def logo_icinde(x, y, R):
+    """Logodaki altın kısım: sekiz köşeli Selçuklu yıldızının (iç içe iki kare) içinde, ortadaki
+    lacivert dairenin dışında; ya da o dairenin içindeki hilalde. Merkez (0, 0), R yıldızın köşesi."""
+    a = R / math.sqrt(2)  # karelerin yarı kenarı
+    if not ((abs(x) <= a and abs(y) <= a) or abs(x + y) <= R and abs(x - y) <= R):
+        return False
+    if x * x + y * y > (0.545 * R) ** 2:
+        return True
+    hx, hy = x / (0.364 * R), y / (0.364 * R)  # hilal, logodaki oranlarla
+    return hx * hx + hy * hy <= 1 and (hx - 0.39) ** 2 + (hy + 0.28) ** 2 > 0.69
+
+
+def hilal_resmi(R, renk, zemin, icinde=hilal_icinde):
+    """Kenarları yumuşatılmış hilal (ya da 'icinde' ile verilen şekil) resmi; dışı saydam.
+    Kenarlar zemin rengine karışır."""
     boy = int(math.ceil(2 * R)) + 2
     merkez = boy / 2
     (r1, g1, b1), (r2, g2, b2) = _rgb(renk), _rgb(zemin)
@@ -1031,7 +1045,7 @@ def hilal_resmi(R, renk, zemin):
     for py in range(boy):
         satir = []
         for px in range(boy):
-            dolu = sum(hilal_icinde(px + (i + 0.5) / ornek - merkez, py + (j + 0.5) / ornek - merkez, R)
+            dolu = sum(icinde(px + (i + 0.5) / ornek - merkez, py + (j + 0.5) / ornek - merkez, R)
                        for i in range(ornek) for j in range(ornek)) / ornek ** 2
             if dolu == 0:
                 bos.append((px, py))
@@ -2285,15 +2299,16 @@ class AyarlarPenceresi:
         pad = {"padx": 8, "pady": 5}
         ttk.Style(w).configure("TNotebook.Tab", padding=(16, 6))
 
-        # Başlık şeridi: hilal, uygulama adı ve seçili konum
-        yesil, altin = TEMALAR["Yeşil"]["bg"], TEMALAR["Yeşil"]["warn"]
-        ust = tk.Frame(w, bg=yesil)
+        # Başlık şeridi: logo, uygulama adı ve seçili konum
+        tema = TEMALAR[VARSAYILAN_TEMA]
+        ust = tk.Frame(w, bg=tema["bg"])
         ust.pack(fill="x")
-        self._baslik_hilal = hilal_resmi(13, altin, yesil)
-        tk.Label(ust, image=self._baslik_hilal, bg=yesil).pack(side="left", padx=(16, 8), pady=12)
-        tk.Label(ust, text=t("app"), bg=yesil, fg="#eafff4",
+        tk.Frame(ust, bg=tema["warn"], height=2).pack(side="bottom", fill="x")  # altın alt çizgi
+        self._baslik_logo = hilal_resmi(15, tema["warn"], tema["bg"], logo_icinde)
+        tk.Label(ust, image=self._baslik_logo, bg=tema["bg"]).pack(side="left", padx=(14, 8), pady=10)
+        tk.Label(ust, text=t("app"), bg=tema["bg"], fg=tema["fg"],
                  font=("Segoe UI", 14, "bold")).pack(side="left")
-        self.baslik_konum = tk.Label(ust, text=app.konum_adi(), bg=yesil, fg=TEMALAR["Yeşil"]["sub"],
+        self.baslik_konum = tk.Label(ust, text=app.konum_adi(), bg=tema["bg"], fg=tema["sub"],
                                      font=("Segoe UI", 10))
         self.baslik_konum.pack(side="right", padx=16)
 

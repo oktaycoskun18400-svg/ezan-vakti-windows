@@ -38,7 +38,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 # Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
-SURUM = "0.5.1"
+SURUM = "0.5.1.1"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
@@ -199,7 +199,7 @@ VARSAYILAN_AYARLAR = {
     "alarm_on": True, "alarm_minutes": 10, "alarm_at_time": True,
     "alarm_vakitler": ["İmsak", "Öğle", "İkindi", "Akşam", "Yatsı"],
     "sound": "zil", "sound_file": "", "volume": 40,
-    "style": "kart", "theme": VARSAYILAN_TEMA, "opacity": "Yarı saydam", "size": 13,
+    "style": "kart", "theme": VARSAYILAN_TEMA, "opacity": "Yarı saydam", "size": 20,
     "x": None, "y": None, "snap_x": "right", "snap_y": "bottom",
     "expanded": False, "autostart": False,
     "calc": "diyanet",
@@ -1168,7 +1168,7 @@ def tek_kopya_mi(bekle_sn=0):
 # ---------------------------------------------------------------- güncelleme
 
 def surum_tuple(metin):
-    return tuple(int(x) for x in re.findall(r"\d+", metin)[:3])
+    return tuple(int(x) for x in re.findall(r"\d+", metin)[:4])  # 0.5.1.1 gibi dört parçalı sürümler de
 
 
 def son_surum_bilgisi():
@@ -1545,15 +1545,13 @@ class EzanVakti:
         self.root.bind("<Double-Button-1>", lambda e: self.open_settings())  # menüyü bulamayanlar için
         self.root.bind("<Control-MouseWheel>", self.wheel_resize)
 
-        onceki = on_pencere()
         self.apply_config()
         self.root.update_idletasks()
         odak_almasin(self.root)
-        odagi_geri_ver(onceki)
         self.root.after(100, self.poll)
         self.tick()
-        if not self.cfg["district_url"]:
-            self.root.after(300, self.open_settings)
+        if not self.cfg["district_url"]:  # ilk açılış: konum seçilsin diye ayarlar ekranın ortasında, önde açılır
+            self.root.after(300, lambda: self.open_settings(ortala=True))
         if self.cfg["hadis_uyari"] or self.cfg["hadis_vakit"]:  # açılışı yavaşlatmasın diye biraz sonra
             self.root.after(5000, self.hadis_indirmeyi_baslat)
         self.saat_dilimi_uyarildi = False
@@ -2291,12 +2289,17 @@ class EzanVakti:
 
     # -------------------------------------------------- diğer
 
-    def open_settings(self):
-        if self.settings and self.settings.win.winfo_exists():
-            self.settings.win.lift()
-            self.settings.win.focus_force()
-            return
-        self.settings = AyarlarPenceresi(self)
+    def open_settings(self, ortala=False):
+        if not (self.settings and self.settings.win.winfo_exists()):
+            self.settings = AyarlarPenceresi(self)
+        w = self.settings.win
+        if ortala:  # sayacın bulunduğu ekranın ortasına
+            w.update_idletasks()
+            sol, ust, sag, alt = calisma_alani(*self._pos)
+            w.geometry(f"+{(sol + sag - w.winfo_reqwidth()) // 2}+{(ust + alt - w.winfo_reqheight()) // 2}")
+        w.deiconify()
+        w.lift()
+        w.focus_force()
 
     def quit(self):
         winsound.PlaySound(None, 0)

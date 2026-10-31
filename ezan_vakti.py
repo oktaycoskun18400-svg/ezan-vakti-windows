@@ -13,9 +13,11 @@ import json
 import math
 import os
 import queue
+import random
 import re
 import sys
 import threading
+import time
 import urllib.parse
 import urllib.request
 import wave
@@ -33,7 +35,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
-TURKIYE_ID = 2
+TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/1.1"}
 
 VAKITLER = ["İmsak", "Güneş", "Öğle", "İkindi", "Akşam", "Yatsı"]
@@ -110,13 +112,20 @@ METINLER = {
     "apply": ("Uygula", "Apply"),
     "saved": ("Kaydedildi ✓", "Saved ✓"),
     "menu_refresh": ("Vakitleri şimdi yenile", "Refresh times now"),
+    "menu_hadith": ("Bir hadis göster", "Show a hadith"),
+    "hadith_title": ("HADİS-İ ŞERİF", "HADITH"),
+    "hadith_wait": ("Hadisler indiriliyor, biraz sonra tekrar deneyin.",
+                    "Hadiths are being downloaded, please try again shortly."),
+    "hadith_on": ("Uyarı anında ve vakit girdiğinde kısa bir hadis göster",
+                  "Show a short hadith at the alert and when the time begins"),
     "menu_quit": ("Çıkış", "Quit"),
     "choose_loc": ("Konum seçin (sağ tık)", "Choose location (right-click)"),
     "loading_times": ("Vakitler alınıyor...", "Loading times..."),
     "fetch_err": ("Vakitler alınamadı:", "Could not get prayer times:"),
     "settings_title": ("Ezan Vakti - Ayarlar", "Prayer Times - Settings"),
     "location": (" Konum ", " Location "),
-    "province": ("İl:", "Province:"),
+    "country": ("Ülke:", "Country:"),
+    "province": ("İl / Eyalet:", "Province / State:"),
     "district": ("İlçe:", "District:"),
     "loading": ("Yükleniyor...", "Loading..."),
     "net_err": ("İnternet hatası", "Connection error"),
@@ -150,6 +159,7 @@ METINLER = {
 
 VARSAYILAN_AYARLAR = {
     "language": "tr",
+    "country_id": TURKIYE[1], "country_name": TURKIYE[0],
     "state_id": None, "state_name": "",
     "district_id": None, "district_name": "", "district_url": "",
     "alarm_on": True, "alarm_minutes": 10, "alarm_at_time": False,
@@ -159,18 +169,21 @@ VARSAYILAN_AYARLAR = {
     "x": None, "y": None, "snap_x": "right", "snap_y": "bottom",
     "expanded": False, "autostart": False,
     "calc": "diyanet",
+    "hadis_on": True,
 }
 # Vakit hesap yöntemleri: (Türkçe ad, İngilizce ad, kısa Türkçe, kısa İngilizce)
 HESAPLAR = {
     "diyanet": ("Diyanet (resmi vakitler)", "Diyanet (official times)", "", ""),
     "ummulkura": ("Ümmü'l-Kurâ (Mekke)", "Umm al-Qura (Makkah)", "Ümmü'l-Kurâ", "Umm al-Qura"),
     "misir": ("Mısır Genel Araştırma Kurumu", "Egyptian General Authority", "Mısır", "Egypt"),
+    "mwl": ("Müslüman Dünya Birliği (MWL)", "Muslim World League (MWL)", "MWL", "MWL"),
 }
 # Astronomik yöntemlerin açıları: fecir (imsak) ve yatsı için güneşin ufkun kaç derece altında olduğu.
 # Ümmü'l-Kurâ'da yatsı açıyla değil, akşamdan sabit dakika sonra (Ramazan'da daha geç) girer.
 YONTEMLER = {
     "ummulkura": {"fecir": 18.5, "yatsi_dk": 90, "yatsi_dk_ramazan": 120},
     "misir": {"fecir": 19.5, "yatsi": 17.5},
+    "mwl": {"fecir": 18, "yatsi": 17},
 }
 
 
@@ -222,20 +235,30 @@ def http_get(url):
         return r.read().decode("utf-8", errors="replace")
 
 
-def get_reg_list(**params):
-    params.update(CountryId=TURKIYE_ID, Culture="tr-TR")
+def get_reg_list(country_id, **params):
+    params.update(CountryId=country_id, Culture="tr-TR")
     url = BASE_URL + "/tr-TR/home/GetRegList?" + urllib.parse.urlencode(params)
     return json.loads(http_get(url))
 
 
-def get_iller():
-    data = get_reg_list(ChangeType="country")
-    return [(s["SehirAdi"], s["SehirID"]) for s in data["StateList"]]
+def get_ulkeler():
+    """Diyanet'in vakit verdiği ülkeler: [(ad, kimlik), ...] (sitedeki ülke listesinden)."""
+    page = html.unescape(http_get(BASE_URL + "/tr-TR"))
+    blok = re.search(r'name="country".*?</select>', page, re.S)
+    if not blok:
+        raise ValueError("Diyanet sayfasında ülke listesi bulunamadı.")
+    return [(ad.strip(), kimlik) for kimlik, ad in
+            re.findall(r'<option value="(\d+)"[^>]*>([^<]+)</option>', blok.group(0))]
 
 
-def get_ilceler(state_id):
-    data = get_reg_list(ChangeType="state", StateId=state_id)
-    return [(d["IlceAdi"], d["IlceID"], d["IlceUrl"]) for d in data["StateRegionList"]]
+def get_iller(country_id):
+    data = get_reg_list(country_id, ChangeType="country")
+    return [(s["SehirAdi"], s["SehirID"]) for s in data["StateList"] or []]
+
+
+def get_ilceler(country_id, state_id):
+    data = get_reg_list(country_id, ChangeType="state", StateId=state_id)
+    return [(d["IlceAdi"], d["IlceID"], d["IlceUrl"]) for d in data["StateRegionList"] or []]
 
 
 SATIR_RE = re.compile(
@@ -277,6 +300,11 @@ def onceki_vakit(days, now):
     return None
 
 
+def yeni_girdi(vakit, now):
+    """Vakit az önce mi girdi? (Uykudan uyanınca çoktan geçmiş vakitler için ses/hadis çıkmasın.)"""
+    return 0 <= (now - vakit).total_seconds() < 90
+
+
 def siradaki_vakit(days, now):
     """(vakit adı, vakit zamanı) ya da veri yoksa None."""
     for gun in range(2):
@@ -292,12 +320,427 @@ def siradaki_vakit(days, now):
     return None
 
 
-# ---------------------------------------------------------------- astronomik hesap
-# Ümmü'l-Kurâ ve Mısır yöntemleri için güneşin konumundan vakit hesabı.
-# Türkiye saati UTC+3 (yaz saati uygulanmıyor).
+# ---------------------------------------------------------------- hadisler
+# Seçme hadislerin sadece kaynak bilgisi (kitap, numara) uygulamada durur. Türkçe ve
+# İngilizce metinler ilk kullanımda açık hadith-api veri setinden indirilip saklanır;
+# böylece başkasına ait çeviriler uygulamanın içinde dağıtılmamış olur.
 
-SAAT_DILIMI = 3
-DIYANET_GUNES_TEMKIN = 7 / 60  # Diyanet güneşi 7 dk erken, akşamı 7 dk geç verir (saat)
+HADIS_API = "https://cdn.jsdelivr.net/gh/fawazahmed0/hadith-api@1/editions"
+KITAP_ADLARI = {"bukhari": ("Buhârî", "Bukhari"), "muslim": ("Müslim", "Muslim"),
+                "abudawud": ("Ebû Dâvûd", "Abu Dawud"), "tirmidhi": ("Tirmizî", "Tirmidhi"),
+                "nasai": ("Nesâî", "Nasa'i"), "ibnmajah": ("İbn Mâce", "Ibn Majah"),
+                "nawawi": ("Nevevî, Kırk Hadis", "an-Nawawi's Forty")}
+TIRNAKLAR = "\"“”«»‘’'`"
+
+
+# Kaynak metinlerdeki sondaki notlar ve sık yazım hataları
+HADIS_SON_NOT = re.compile(
+    r"\s*(Tekrar[ıi]?\s*:|Diğer tahric|Tirmizî rivâyet etmiştir|AÇIKLAMA|İzah için|Bu Hadis(in)? (geçtiği|İleride|ileride)|"
+    r"\(Ravi\)|Zevaid|\((Müslim|Buhari|Buhârî|Ebû Dâvûd|Nesâî|İbn Mâce)[^)]*\)?|\(See Hadith|"
+    r"Other chains|Abu .Abdur|Sufyan said|\(Sahih\)|A hasan( \(good\))? hadeeth|It was related by|"
+    r"\[Imam an-Nawawi|\[Abu .Eisa|Bu Hadis \d+ numara|"
+    r"\[(Buhari|Müslim|Tirmizi|Nesai|İbn Mace|Ebu Davud|Kitabu|Al-Bukhari|Bukhari|Muslim|At-Tirmidhi|"
+    r"Ibn Majah|Abu Dawud|an-Nasa)[^\]]*\]).*$")
+HADIS_DUZELT = {"yapınl": "yapın!", "şahidhği": "şahitliği", "onutn aybmı)": "onun aybını)",
+                "Aııah": "Allah", "ResuluIlah": "Resulullah", "(günah}lara": "(günah)lara", "\xad": "",
+                "Iki serin": "İki serin", "kî,": "ki,", "cennet'in": "cennetin", "cehennem'den": "cehennemden",
+                "onun aybını)": "onun aybını", "üstteki, veren": "Üstteki, veren", "halk'a": "halka",
+                "dal'ı": "dalı", "cennet'e": "cennete", "Son Of Adan": "Son of Adam", "ÇÜnkü": "Çünkü",
+                "dillini": "dilini", "Siz'den": "Sizden", "alâmeti": "alameti", "yapbğın": "yaptığın",
+                "diğer azalan": "diğer azaları", "Allah tan": "Allah'tan", "Şevval'dan": "Şevval'den",
+                "yıl(ın günahların) ı": "yılın günahlarını", "(rızası İçin )": "(rızası için)",
+                "imanı (nı)": "imanını", "pro longed": "prolonged", "Kith and kin": "kith and kin",
+                "a second .": "a second.", 'two."And he indicaed': 'two." And he indicated'}
+# Ayıklamadan sonra uygulanan, belirli hadislere özel düzeltmeler (noktalama, kesik başlangıçlar)
+HADIS_SON_DUZELT = {
+    "zamanı vardır; Birincisi iftar ettiği an diğeri": "zamanı vardır: Birincisi iftar ettiği an, diğeri",
+    "yol bulamazlar ve kur’a çekerlerdi": "yol bulamasalardı kur’a çekerlerdi",
+    "sevap vardır oruçlunun": "sevap vardır; oruçlunun",
+    "bedeldir.” Yani hac gibi sevâb kazandırır.": "bedeldir.",
+    "olanınızım.» Not.": "olanınızım.",
+    "Resulullah'tan (ﷺ) şunu ezberledim: \"": "",
+    "I memorised from the Messenger of Allah (peace and blessings of Allah be upon him): “": "",
+    "Günde yüz defa tesbih edenlerin": "Günde yüz defa «Sübhânallâhi ve bihamdihî» diyenin",
+    "Subhan Allah wa bihamdihi,' one hundred times a day, will":
+        "Whoever says ‘Subhan Allah wa bihamdihi’ one hundred times a day will",
+    "I passed by the Prophet (saas) and he said to me: 'O Hazim": "O Hazim",
+    'Hâzim "Lâ havle': 'Ey Hâzim! "Lâ havle',
+    "O Allah forgive me if You wish. O Allah have mercy on me if You wish.’ Let him":
+        "None of you should say: ‘O Allah forgive me if You wish. O Allah have mercy on me if You wish.’ "
+        "Let him",
+    "Ben kulumun bana ait tahmininin yanındayım bana dua ettiğinde":
+        "Ben, kulumun Beni zannı üzereyim; bana dua ettiğinde",
+    ' (This term "Haya" covers a large number of concepts which are to be taken together; amongst them are '
+    'self respect, modesty, bashfulness, and scruple, etc.)': " (modesty)",
+    'has not been granted).': 'has not been granted").',
+    "O Allah! Compensate every person who spends":
+        "Every day two angels come down; one of them says, ‘O Allah! Compensate every person who spends",
+    "Your Cause,' and the other (angel) says, 'O Allah! Destroy every miser.":
+        "Your Cause,’ and the other (angel) says, ‘O Allah! Destroy every miser.’",
+    "Her gün, dünyaya iki melek iner ve bunlardan biri, Allah'ım! infak eden kişiye, yenisini ver.' "
+    "Diğeri de, Allah'ım! Vermeyen'in malını telef et' der.":
+        "Her gün dünyaya iki melek iner. Bunlardan biri: ‘Allah'ım! İnfak eden kişiye yenisini ver’ der. "
+        "Diğeri de: ‘Allah'ım! Vermeyenin malını telef et’ der.",
+    "(his promise )": "(his promise)",
+    # --- Son gözden geçirme: anlam birliği (TR/EN), parantez açıklamaları, noktalama ve yazım ---
+    # Namaz
+    "Beş vakit namaz, bir sonraki cumaya kadar Cuma (namazı) büyük günahlar işlenmediği sürece, aralarındaki "
+    "(günah)lara kefarettir.":
+        "Beş vakit namaz ve bir Cuma (namazı) bir sonraki Cuma'ya kadar, büyük günahlardan kaçınıldığı sürece "
+        "aralarındaki (günah)lara kefarettir.",
+    "İki serin vakitteki namazları kim kılarsa cennete girer.":
+        "İki serin vakit namazını (sabah ve ikindi) kılan cennete girer.",
+    "(`Asr and Fajr)": "('Asr and Fajr)",
+    "Her kim Allah için bir mescid bina ederse Allah da onun için Cennette onun mislini bina eder.":
+        "Her kim Allah için bir mescit yaparsa, Allah da onun için cennette benzerini yapar.",
+    "Namazın anahtarı, taharet (abdest-teyemmüm) dir. Tahrimi (girişi), tekbir almak; tahlili (çıkışı) selam "
+    "vermektir.":
+        "Namazın anahtarı taharettir (abdest veya teyemmüm). Namaza giriş tekbir almak, namazdan çıkış ise "
+        "selam vermektir.",
+    "Her kim mescide gidip gelirse her gidip gelmesi karşılığında Allah (Celle Celaluhu) o'na cennetteki yerini "
+    "hazırlar.":
+        "Her kim sabah akşam (cemaatle namaz için) mescide gidip gelirse, her gidip gelişi için Allah ona "
+        "cennette bir ikram yeri hazırlar.",
+    "İnsanlar ezan okumakta ve ilk safta namaz kılmanın ne kadar değerli olduğunu bilseler ve kur’a çekmekten "
+    "başka yol bulamasalardı kur’a çekerlerdi.":
+        "İnsanlar ezan okumanın ve ilk safta namaz kılmanın ne kadar sevaplı olduğunu bilselerdi ve buna kur'a "
+        "çekmekten başka yolla ulaşamasalardı, kur'a çekerlerdi.",
+    "Geceleyin bir namazı olup da kendisine uyku galebe çalan hiçbir kimse yoktur ki, o kimseye o namazın ecri "
+    "yazılmasın ve uykusu da kendisine sadaka olmasın.":
+        "Gece (kılmayı âdet edindiği) bir namazı olup da (bir gece) uykuya yenik düşen herkese o namazın sevabı "
+        "yazılır; uykusu da ona sadaka olur.",
+    "İman ile küfür arasında namaz'ı terk etmek vardır.": "İman ile küfür arasında namazı terk etmek vardır.",
+    "Güneşin doğduğu en hayırlı gün; Cuma günüdür. Adem o günde yaratıldı, Cennete o gün girdi ve o gün "
+    "Cennet’ten çıkarıldı, kıyamette Cuma günü kopacaktır.":
+        "Güneşin doğduğu en hayırlı gün Cuma günüdür. Âdem o gün yaratıldı, o gün cennete girdi ve o gün "
+        "cennetten çıkarıldı. Kıyamet de ancak Cuma günü kopacaktır.",
+    "spend the entire night": "spent the entire night",
+    "Kim günde on iki rekat nafile (namaz) kılarsa o namazlar sebebiyle kendisine cennette bir ev yapılır.":
+        "Kim bir gün ve gecede on iki rekât nafile namaz kılarsa, bunlar sebebiyle kendisine cennette bir ev "
+        "yapılır.",
+    "a house will be built from him": "a house will be built for him",
+    "Ezan'ı işittiğiniz zaman, müezzinin söylediklerini tekrarlayın!":
+        "Ezanı işittiğiniz zaman, müezzinin söylediklerini (siz de) tekrarlayın!",
+    "Mu'adh-dhin": "Mu'adhdhin",
+    "Sabah namazının iki rek'ât sünneti, dünyâdan ve dünyâdaki her şey'den daha hayırlıdır.":
+        "Sabah namazının iki rekât sünneti, dünyadan ve dünyadaki her şeyden daha hayırlıdır.",
+    "Bazı namazlarınızı evinizde kılın!": "(Nafile) namazlarınızın bir kısmını evinizde kılın!",
+    "Ya saflarınızı iyice düzeltirsiniz veya Allah (C.C.) yüzlerinizi tersine çevirecektir.":
+        "Ya saflarınızı iyice düzeltirsiniz ya da Allah yüzlerinizi tersine çevirir.",
+    "Şüphesiz münafıklara en çok ağır gelen namaz, yatsı ve sabah namazlarıdır. Eğer bunlardaki sevabı bilmiş "
+    "olsaydılar bu iki namaz (için mescid)'e emekliye emekliye de olsa gelirlerdi.":
+        "Münafıklara en ağır gelen namazlar, yatsı ve sabah namazlarıdır. Bu ikisindeki sevabı bilselerdi, "
+        "(mescide) emekleyerek de olsa gelirlerdi.",
+    # Oruç
+    "Yalan söylemeyi ve bu yalancı şahitliği bırakmayan kimsenin yemeyi ve içmeyi bırakmasına Allah'ın asla "
+    "ihtiyacı yoktur.":
+        "Yalan sözü ve yalanla iş yapmayı bırakmayan kimsenin yemesini ve içmesini bırakmasına Allah'ın hiçbir "
+        "ihtiyacı yoktur (yani Allah onun orucunu kabul etmez).",
+    "and the joy of when he meets": "and the joy when he meets",
+    "diğeri Cennet’te Rabbiyle": "diğeri cennette Rabbiyle",
+    "sonra bunun arkasında Şevval'den altı gün oruç tutarsa, onun tutmuş olduğu oruç, yıl boyunca tutulan oruç "
+    "gibidir.":
+        "sonra arkasından Şevval'den altı gün oruç tutarsa, bütün yılı oruçla geçirmiş gibi olur.",
+    "Her kim bir oruçluya iftar yemeği verirse kendisine onun sevâbı kadar sevap vardır; oruçlunun sevâbından "
+    "bir şey eksiltmeksizin.":
+        "Her kim bir oruçluya iftar ettirirse, oruçlunun sevabından hiçbir şey eksilmeksizin onun sevabı kadar "
+        "sevap kazanır.",
+    "Allah yolunda cihâd ederken kim bir gün oruç tutarsa Allah bu orucundan dolayı ondan Cehennem ateşini "
+    "yetmiş yıl uzaklaştırır.":
+        "Kim Allah yolunda bir gün oruç tutarsa, Allah o gün sebebiyle onun yüzünü cehennem ateşinden yetmiş "
+        "yıl(lık mesafe) uzaklaştırır.",
+    "except that, that day": "except that this day",
+    "Allah'ın, Arefe günü orucunu ondan önceki yıla ve ondan sonraki yıla kefaret kılmasını umarım.":
+        "Arefe günü orucunun, önceki ve sonraki yılın (günahlarına) kefaret olmasını Allah'tan umarım.",
+    "Allah'ın, Aşure günü orucuyla ondan önceki yılın günahlarını bağışlamasını şüphesiz umarım.":
+        "Aşure günü orucunun, önceki yılın (günahlarına) kefaret olmasını Allah'tan umarım.",
+    "cehennem'in kapıları": "cehennemin kapıları",
+    # Abdest
+    "Ateşten dolayı vay topukların haline.": "(Abdestte iyi yıkanmayan) topukların ateşten vay haline!",
+    "Save your heels from the Hell-fire.": "Save your heels from the Hell-fire (by washing them well in ablution).",
+    # Sadaka
+    "Sadaka hiçbir zaman malı eksiltmez, Allah affetmesiyle kişinin şerefini artırır. Allah için alçakgönüllülük "
+    "gösteren bir kimsenin derecesini Allah yükseltir.":
+        "Sadaka malı eksiltmez. Allah, affeden kulunun ancak şerefini artırır. Allah için alçakgönüllü olanı da "
+        "Allah yükseltir.",
+    "Yarım hurmayla bile olsa cehennemden korunun.":
+        "Yarım hurmayı sadaka olarak vermekle de olsa cehennemden korunun.",
+    "Her yapılan iyilik sadaka sevâbı kazandırır. Kardeşini güler yüzle karşılamak bir iyilik olduğu gibi kendi "
+    "kabından ihtiyacı olan bir şeyi kardeşinin kabına boşaltmakta bir iyilik olup sadaka sevâbı kazandırır.":
+        "Her iyilik bir sadakadır. Kardeşini güler yüzle karşılaman ve kovandan (artan suyu) kardeşinin kabına "
+        "boşaltman da iyiliktir.",
+    "‘Allah'ım! İnfak eden kişiye yenisini ver’": "‘Allah'ım! (Senin yolunda) infak edene yenisini ver’",
+    # Güzel ahlak
+    "Müslüman, dilinden, elinden müslümanlar selamette kalan kimsedir. Muhacir de Allâh`ın nehyettiğini "
+    "terkedendir.":
+        "Müslüman, dilinden ve elinden Müslümanların emin olduğu kimsedir. Muhacir (hicret eden) de Allah'ın "
+        "yasakladıklarını terk edendir.",
+    "Sizden biriniz kendisi için sevdiğini mü’min kardeşi içinde sevmedikçe gerçek mü’min olamaz.":
+        "Sizden biriniz, kendisi için sevdiğini mümin kardeşi için de sevmedikçe (gerçek) mümin olamaz.",
+    "Güçlü, kuvvetli kişi rakiplerinin sırtını yerine getiren kişi değildir. Asıl güçlü kuvvetli kişi, "
+    "öfkelendiği vakit nefsine hakim olabilendir.":
+        "Güçlü kişi, (güreşte) rakiplerinin sırtını yere getiren değildir. Asıl güçlü kişi, öfkelendiği vakit "
+        "nefsine hâkim olandır.",
+    "Allah şüphesiz ki Refik'tir. Kullarının yumuşaklıkla muamele etmelerini sever ve sert davranmakla vermediği "
+    "(muvaffakiyet ve sevabı) yumuşaklıkla davranma ile (kuluna) verir.":
+        "Şüphesiz Allah Refîk'tir (yumuşak davranandır) ve yumuşaklığı sever. Sertliğe vermediği (sevabı) "
+        "yumuşaklığa verir.",
+    "Cibril, komşu hakkında o kadar tavsiyede bulundu ki sonunda (kendi kendine) onu mirasçı kılacak, dedim.":
+        "Cebrail bana komşu hakkında o kadar tavsiyede bulundu ki, onu (komşusuna) mirasçı kılacak sandım.",
+    "Kur’ân-ı öğrenen ve öğretendir.": "Kur'an'ı öğrenen ve öğretendir.",
+    "Canım kudret elinde olan Allah’a yemin ederim ki; İman etmeden Cennete giremezsiniz, birbirinizi sevmeden de "
+    "iman etmiş olmazsınız. Size yaptığınız takdirde birbirinizi seveceğiniz bir işi göstereyim mi? Selamı "
+    "aranızda yaygınlaştırınız.":
+        "Canım kudret elinde olan Allah'a yemin ederim ki, iman etmedikçe cennete giremezsiniz; birbirinizi "
+        "sevmedikçe de iman etmiş olmazsınız. Yaptığınızda birbirinizi seveceğiniz bir şeyi size göstereyim mi? "
+        "Aranızda selamı yayınız.",
+    "Çoğu insanın farkına varamadığı iki nimet vardır ki, onlar sağlık ve boş vakittir.":
+        "İki nimet vardır ki insanların çoğu onlarda aldanmıştır: sağlık ve boş vakit.",
+    "Allah şüphesiz (mükâfatlandırma veya cezalandırma bakımından) sizin suretlerinize ve mallarınıza bakmaz ve "
+    "lâkin ancak amellerinize ve kalblerinize bakar.":
+        "Allah sizin suretlerinize ve mallarınıza bakmaz; ancak kalplerinize ve amellerinize bakar.",
+    "Kim bir müslüman (kardeşinin aybın)ı örterse Allah da onun aybını dünyada ve âhirette örter.":
+        "Kim bir Müslümanın ayıbını örterse, Allah da dünyada ve ahirette onun ayıbını örter.",
+    "Kıyamet günü mü’minin mizanında hiçbirşey güzel ahlaktan daha ağır değildir. Allah kaba ve ahlaksız "
+    "kişileri asla sevmez.":
+        "Kıyamet günü müminin mizanında güzel ahlaktan daha ağır gelen hiçbir şey yoktur. Allah, kaba ve "
+        "hayâsız kimseye buğzeder.",
+    "Ben ve yetimle ilgilenen kişi Cennet’te; şu ikisi gibiyiz diyerek iki parmağını gösterdi.":
+        "Ben ve yetime bakan kişi cennette şu ikisi gibiyiz. (Ve işaret parmağı ile orta parmağını gösterdi.)",
+    "Sabır, musibet'in darbesini ilk yediğin anda göstereceğin davranıştır.":
+        "(Asıl) sabır, musibetin ilk anında gösterilendir.",
+    "Batan bir dikene varıncaya kadar Müslüman'a gelip çatan her bir musibet karşılığında Allah, mutlaka onun "
+    "günahlarının bir kısmını örter.":
+        "Müslümana isabet eden her musibet sebebiyle, ayağına batan bir diken bile olsa, Allah onun "
+        "günahlarından bir kısmını mutlaka bağışlar.",
+    "Dünya; mü’min için bir hapishane, kafir için ise bir Cennettir.":
+        "Dünya mümin için bir zindan, kâfir için ise cennettir.",
+    "Ademoğlunun iki vadi dolu altını olsa üçüncü vadinin de kendisinin olmasını ister. Ne var ki insan oğlunun "
+    "ağzını ancak toprak doldurur. Yine de Allah tevbe edenin tevbesini kabul eder.":
+        "Âdemoğlunun bir vadi dolusu altını olsa, ikincisinin de olmasını ister. Onun ağzını ancak toprak "
+        "doldurur. Allah tövbe edenin tövbesini kabul eder.",
+    "nothing fills his mouth but dust, Allah turns": "nothing fills his mouth but dust, and Allah turns",
+    "Kim rızkının lehine genişletilmesine, ecelinin de geciktirilmesine memnun oluyorsa, o da akrabalık bağını "
+    "gözetsin.":
+        "Kim rızkının genişletilmesini ve ömrünün uzatılmasını isterse, akrabalık bağını gözetsin.",
+    "Who ever is pleased": "Whoever is pleased",
+    "Ben de aileme en iyi olanınızım.": "Ben de aileme karşı en iyi olanınızım.",
+    "yediyüz katına": "yedi yüz katına",
+    "Mümin lanet eden bir kişi olamaz.": "Mümin, çokça lanet eden biri olamaz.",
+    "Müslüman'a sövmek fısktır ve onunla çarpışmak küfürdür.":
+        "Müslümana sövmek fısk (günah), onunla savaşmak küfürdür (inkârdır).",
+    "yaptığı amellerin neticesine": "yaptıkları amellerin karşılığına",
+    "İman altmış bu kadar şu`bedir. Haya da iman’ın bir şu`besidir.":
+        "İman altmış küsur şubedir (kısımdır). Haya (utanma duygusu) da imanın bir şubesidir.",
+    "Ademoğlu ihtiyarladıkça iki yönü gençleşir; uzun ömürlü olmak ve çok mal elde etmek.":
+        "Âdemoğlu ihtiyarlar ama onda iki şey gençleşir: yaşama arzusu ve mal hırsı.",
+    "best to your women": "best to their women",
+    "Kim gereksiz ve günah kazandıran sözlerden dilini korursa her türlü sıkıntıdan ve günahtan kurtulur.":
+        "Susan kurtulur. (Yani gereksiz ve günah olan sözlerden dilini koruyan kurtuluşa erer.)",
+    "Allah insanlara merhamet etmeyene, merhamet etmez.": "Allah, insanlara merhamet etmeyene merhamet etmez.",
+    "Mu'minler bir binanın tuğlaları gibidir, birbirine destek olurlar.":
+        "Mümin, mümin için birbirini destekleyen bir binanın tuğlaları gibidir. (Ve parmaklarını birbirine "
+        "geçirdi.)",
+    "kendi ayağındaki nalınının tasmasından": "ayakkabısının bağından",
+    'like these two." And he indicated with his fingers, meaning his index and his middle finger.':
+        "like these two. (And he indicated with his index and middle fingers.)",
+    'enforce each other." The Prophet (pbuh) then clasped his hands with the fingers interlaced (while saying that).':
+        "support each other. (Then he clasped his hands with the fingers interlaced.)",
+    "Şüphesiz ahlakı en güzel olanlarınız sizin en hayırlılarınızdandırlar.":
+        "Sizin en hayırlılarınız, ahlakı en güzel olanlarınızdır.",
+    "Ey müslüman kadınlar! Komşunuza bir koyun paçası bile olsa (hediye vermeyi) önemsiz sanmayın.":
+        "Ey Müslüman kadınlar! Hiçbiriniz komşusundan gelen (ya da ona verdiği) hediyeyi, bir koyun paçası "
+        "bile olsa küçümsemesin.",
+    "Küçüklerimize şefkat etmeyen büyüklerimize": "Küçüklerimize şefkat etmeyen, büyüklerimize",
+    "mu'minlerin bir vücuda": "müminlerin bir vücuda",
+    "Bir kimseye kardeşinden -karşılaştıkları halde biri yüzünü bir tarafa, öbürü öbür tarafa çevirerek- üç "
+    "günden fazla dargın durması helal değildir. Onların hayırlıları ise daha önce selam veren kişidir.":
+        "Bir kimsenin, karşılaştıklarında biri bir yana öbürü öbür yana yüz çevirerek din kardeşine üç günden "
+        "fazla küs durması helal değildir. İkisinin hayırlısı, önce selam verendir.",
+    "İnsanların peygamberlik sözlerinden ilk öğrendiği şey şudur: Şayet utanmıyorsan dilediğini yap!":
+        "İnsanların önceki peygamberlerin sözlerinden öğrendiklerinden biri de şudur: Utanmıyorsan dilediğini "
+        "yap!",
+    # Zikir, dua ve Kur'an
+    "Bana bir defa salevât getirene Allah (c.c.) on salevât sevabı verir.":
+        "Kim bana bir defa salavat getirirse, Allah da ona on kat rahmet eder.",
+    'Ey Hâzim! "Lâ havle ve lâ kuvvete illâ billahi" zikrini çok söyle.':
+        "Ey Hâzim! «Lâ havle ve lâ kuvvete illâ billâh» (Güç ve kuvvet ancak Allah'tandır) sözünü çok söyle.",
+    "Kur'ân-ı Kerim'de maharetli olan (mu'min), Allah'a itaatkâr ve saygın meleklerle beraberdir. Okuyuşunda "
+    "güçlük çekerek ve ayet ile kelimeleri tekrarlamak suretiyle (yâni okuyuşunda pişkin olmayarak) okuyan "
+    "(müslüman) a iki sevab vardır.":
+        "Kur'an'ı okumada mahir olan, şerefli ve itaatkâr (kâtip) meleklerle beraberdir. Onu zorlanarak, "
+        "takılarak okuyana ise iki sevap vardır.",
+    "İnsan öldüğü zaman amel defteri kapanır ancak şu üç kişinin defteri kapanmaz, sevap yazılmaya devam eder; "
+    "sadakayı cariye (vakıf), kendisinden istifade edilen ilim ve kendisine dua eden hayırlı salih bir çocuk.":
+        "İnsan ölünce ameli kesilir; ancak üç şey bundan müstesnadır: sadaka-i câriye (sevabı devam eden "
+        "sadaka), kendisinden faydalanılan ilim ve kendisine dua eden salih evlat.",
+    "Dua ettim kabul edilmedi denilerek acele edilmediği sürece dualar mutlaka kabul edilir.":
+        "Sizden birinin duası, ‘Dua ettim ama kabul edilmedi’ diyerek acele etmedikçe kabul olunur.",
+    "Sizden biriniz, Allah’ım dilersen beni bağışla, Allah’ım dilersen bana acı demesin. Duâsını kesin yapsın "
+    "çünkü kendisini zorlayan yoktur.":
+        "Sizden biriniz ‘Allah'ım, dilersen beni bağışla; Allah'ım, dilersen bana merhamet et’ demesin. "
+        "Duasında kararlı olsun; çünkü Allah'ı zorlayabilecek hiç kimse yoktur.",
+}
+# Gösterilecek kaynak: Nevevî'nin Kırk Hadis'indekiler asıl Kütüb-i Sitte kaynağıyla, Müslim'dekiler
+# veri setinin sıra numarası yerine bilinen numarasıyla gösterilir
+KAYNAK = {
+    ("muslim", 550): ("muslim", 233), ("muslim", 1688): ("muslim", 725),
+    ("nawawi", 3): ("bukhari", 8), ("nawawi", 9): ("bukhari", 7288), ("nawawi", 11): ("tirmidhi", 2518),
+    ("nawawi", 18): ("tirmidhi", 1987), ("nawawi", 20): ("bukhari", 3483), ("nawawi", 34): ("muslim", 49),
+    ("nawawi", 39): ("ibnmajah", 2045),
+}
+HADIS_FILE = os.path.join(DATA_DIR, "hadisler.json")
+HADIS_SURUM = 2  # önbellek biçimi: 2 = ham metinler (ayıklama gösterirken yapılır)
+# Seçme hadisler: (kitap, hadith-api numarası, konu). Namaz, oruç, abdest, sadaka ve güzel
+# ahlak üzerine; kısa, Türkçesi ve İngilizcesi düzgün olanlar. Buhârî ve Müslim dışındakiler
+# "sahih" derecelilerden seçildi.
+HADISLER = [
+    ("muslim", 550, "namaz"), ("bukhari", 645, "namaz"), ("bukhari", 574, "namaz"), ("ibnmajah", 736, "namaz"),
+    ("abudawud", 61, "namaz"), ("bukhari", 662, "namaz"), ("tirmidhi", 225, "namaz"), ("abudawud", 1314, "namaz"),
+    ("bukhari", 1923, "oruc"), ("tirmidhi", 699, "oruc"), ("bukhari", 38, "oruc"),
+    ("bukhari", 1903, "oruc"), ("tirmidhi", 766, "oruc"), ("ibnmajah", 1716, "oruc"), ("bukhari", 3257, "oruc"),
+    ("tirmidhi", 807, "oruc"), ("bukhari", 887, "abdest"), ("tirmidhi", 2029, "sadaka"), ("bukhari", 1417, "sadaka"),
+    ("bukhari", 1429, "sadaka"), ("bukhari", 10, "ahlak"), ("tirmidhi", 2515, "ahlak"), ("bukhari", 6114, "ahlak"),
+    ("bukhari", 6136, "ahlak"), ("tirmidhi", 2500, "ahlak"), ("abudawud", 4809, "ahlak"), ("ibnmajah", 3688, "ahlak"),
+    ("abudawud", 5151, "ahlak"), ("tirmidhi", 2909, "ahlak"), ("tirmidhi", 2688, "ahlak"), ("bukhari", 6412, "ahlak"),
+    ("ibnmajah", 4143, "ahlak"), ("bukhari", 6065, "ahlak"), ("ibnmajah", 2544, "ahlak"),
+    ("bukhari", 6464, "ahlak"), ("tirmidhi", 2002, "ahlak"), ("tirmidhi", 1918, "ahlak"),
+    # Riyâzü's-Sâlihîn'in bölüm konularından (tövbe, sabır, zühd, akraba, zikir, ilim...);
+    # Nevevî bu hadisleri Kütüb-i Sitte'den aldığı için kaynak olarak asıl kitap yazılır
+    ("bukhari", 1283, "ahlak"), ("bukhari", 5640, "ahlak"), ("tirmidhi", 2324, "ahlak"), ("tirmidhi", 2337, "ahlak"),
+    ("bukhari", 55, "sadaka"), ("bukhari", 5985, "ahlak"), ("ibnmajah", 1977, "ahlak"),
+    ("abudawud", 1530, "zikir"), ("bukhari", 6405, "zikir"), ("ibnmajah", 3826, "zikir"), ("ibnmajah", 3779, "zikir"),
+    ("tirmidhi", 1376, "zikir"), ("tirmidhi", 2618, "namaz"), ("tirmidhi", 488, "namaz"), ("tirmidhi", 221, "namaz"),
+    ("abudawud", 1250, "namaz"), ("tirmidhi", 212, "namaz"), ("bukhari", 611, "namaz"), ("tirmidhi", 1623, "oruc"),
+    ("ibnmajah", 1730, "oruc"), ("ibnmajah", 1738, "oruc"),
+    ("bukhari", 42, "ahlak"), ("bukhari", 33, "ahlak"), ("tirmidhi", 2019, "ahlak"), ("ibnmajah", 69, "ahlak"),
+    ("tirmidhi", 1970, "sadaka"), ("tirmidhi", 2014, "ahlak"), ("tirmidhi", 2388, "zikir"),
+    ("muslim", 1688, "namaz"), ("bukhari", 432, "namaz"), ("bukhari", 717, "namaz"), ("ibnmajah", 797, "namaz"),
+    ("bukhari", 2017, "oruc"), ("tirmidhi", 939, "oruc"), ("bukhari", 165, "abdest"), ("bukhari", 1426, "sadaka"),
+    ("bukhari", 1393, "ahlak"), ("bukhari", 9, "ahlak"), ("bukhari", 6340, "zikir"), ("bukhari", 1899, "oruc"),
+    ("tirmidhi", 2339, "ahlak"), ("tirmidhi", 1162, "ahlak"), ("tirmidhi", 2501, "ahlak"), ("abudawud", 4681, "ahlak"),
+    ("bukhari", 7376, "ahlak"), ("bukhari", 2446, "ahlak"), ("bukhari", 6488, "ahlak"), ("bukhari", 3559, "ahlak"),
+    ("ibnmajah", 3682, "sadaka"), ("bukhari", 2566, "ahlak"), ("tirmidhi", 3497, "zikir"),
+    ("tirmidhi", 1919, "ahlak"), ("bukhari", 6011, "ahlak"), ("ibnmajah", 3362, "ahlak"), ("bukhari", 1442, "sadaka"),
+    ("bukhari", 6077, "ahlak"),
+    # İmam Nevevî, Kırk Hadis (el-Erbaîn) — kaynak olarak asıl kitabı gösterilir (KAYNAK)
+    ("nawawi", 3, "namaz"), ("nawawi", 9, "ahlak"), ("nawawi", 11, "ahlak"), ("nawawi", 18, "ahlak"),
+    ("nawawi", 20, "ahlak"), ("nawawi", 34, "ahlak"), ("nawawi", 39, "ahlak"),
+]
+HADIS_SURE_MS = 15000  # balon ekranda bu kadar kalır (tıklayınca hemen kapanır)
+
+
+def hadis_ozu(metin, dil):
+    """Rivayet zincirini atıp Peygamber'in sözünü döner ("... şöyle buyurdu: «söz»" → "söz")."""
+    t = re.sub(r"\s+", " ", metin or "").strip()
+    t = HADIS_SON_NOT.sub("", t)
+    for yanlis, dogru in HADIS_DUZELT.items():
+        t = t.replace(yanlis, dogru)
+    if dil == "tr":
+        bulunan = list(re.finditer(r"(buyur\w*|şöyle de\w*|dedi ki)\s*(ki)?\s*[:,;]?\s*", t))
+        if bulunan:
+            sonrasi = t[bulunan[-1].end():]
+            # "...buyurduğu nakledilmiştir: «söz»" gibi: kısa bir ekten sonra gelen ':' işaretini de geç
+            sonrasi = re.sub(r"^[^:\"“«]{0,30}:\s*", "", sonrasi)
+            # Söz "buyurdu"dan önce de gelebilir: «...» buyurmuştur → tırnak içini al
+            # (kesme işareti Türkçede ek ayırdığı için tırnak sayılmaz: "Cerir'in", "iman’ın")
+            tirnakli = re.findall(r"[\"“«]([^\"”»“«]{10,})[\"”»]", t[:bulunan[-1].start()])
+            t = sonrasi if len(sonrasi.strip(TIRNAKLAR + " .")) >= 10 or not tirnakli else tirnakli[-1]
+        t = re.sub(r"^((I|İ)şittim|Demiştir|Söylemiştir|dedi)\W+", "", t, flags=re.I).lstrip("-–— ")
+    else:
+        # "X said: 'The Messenger said, «söz»'" gibi iç içe aktarımlarda her katmanı soy
+        for tur in range(3):
+            m = (re.search(r"\b(said|says|say|saying|replied)\b[,:]?\s*(?=[\"“‘'])", t)
+                 or re.search(r"\b(said|says|saying)\b\s*:\s*", t))
+            if not m or (tur and m.start() > 80):
+                break
+            t = t[m.end():].lstrip(TIRNAKLAR + " ")
+        t = re.sub(r"^Narrated [^:]{1,60}:\s*", "", t).replace("(ﷺ)", "(pbuh)")
+    t = t.strip().strip(TIRNAKLAR + " .,;:").strip()
+    if t and t[-1] not in ".!?…":
+        t += "."
+    if not t:
+        return ""
+    ilk = {"i": "İ", "ı": "I"}.get(t[0], t[0].upper()) if dil == "tr" else t[0].upper()
+    t = ilk + t[1:]
+    for yanlis, dogru in HADIS_SON_DUZELT.items():
+        t = t.replace(yanlis, dogru)
+    if dil == "tr":  # kelime içindeki kesme işareti tek tip olsun: Allah’a → Allah'a
+        t = re.sub(r"(?<=\w)[’`](?=\w)", "'", t)
+    return t
+
+
+def hadis_kaynagi(kitap, numara, en=False):
+    """Balonda gösterilecek kaynak: "— Buhârî, 6114"."""
+    kitap, numara = KAYNAK.get((kitap, numara), (kitap, numara))
+    ad = KITAP_ADLARI[kitap][en]
+    return f"— {ad}, {numara}" if numara else f"— {ad}"
+
+
+def hadis_onbellegi():
+    """İndirilmiş ham hadis metinleri; eski biçimdeki önbellek yok sayılır (yeniden indirilir)."""
+    veri = load_json(HADIS_FILE, {})
+    if isinstance(veri, dict) and veri.get("_surum") == HADIS_SURUM:
+        return veri.get("hadis", {})
+    return {}
+
+
+HADIS_YEDEK_API = "https://raw.githubusercontent.com/fawazahmed0/hadith-api/1/editions"
+
+
+def _hadis_json(yol):
+    """Önce CDN'den, olmazsa GitHub'dan; sunucu yoğunsa (403/429) kısa bekleyip tekrar dener."""
+    son_hata = None
+    for deneme in range(3):
+        for kok in (HADIS_API, HADIS_YEDEK_API):
+            try:
+                return json.loads(http_get(f"{kok}/{yol}"))
+            except Exception as e:  # ağ/sunucu hatası
+                son_hata = e
+        time.sleep(1.5 * (deneme + 1))
+    raise son_hata
+
+
+def hadis_indir(kitap, numara):
+    """Bir hadisin ham Türkçe ve İngilizce metnini indirir: {"tr": ..., "en": ...}.
+
+    Ham metin saklanır; ayıklama (hadis_ozu) gösterirken yapılır, böylece sonraki
+    düzeltmeler yeniden indirmeden uygulanır.
+    """
+    sonuc = {}
+    for dil, onek in (("tr", "tur"), ("en", "eng")):
+        veri = _hadis_json(f"{onek}-{kitap}/{numara}.min.json")
+        sonuc[dil] = veri["hadiths"][0].get("text", "")
+        time.sleep(0.3)  # sunucuyu art arda isteklerle yormamak için
+    return sonuc
+
+
+def eksik_hadisleri_indir(mevcut):
+    """Henüz indirilmemiş seçme hadisleri indirir; {"kitap:no": {...}} döner (arka planda çalışır)."""
+    yeni = {}
+    for kitap, numara, _ in HADISLER:
+        anahtar = f"{kitap}:{numara}"
+        if anahtar in mevcut:
+            continue
+        try:
+            yeni[anahtar] = hadis_indir(kitap, numara)
+        except Exception:
+            continue  # bu sefer olmadı; bir sonraki açılışta tekrar denenir
+    return yeni
+
+
+# ---------------------------------------------------------------- astronomik hesap
+# Diyanet dışındaki yöntemler için güneşin konumundan vakit hesabı.
+#
+# Konumun saat dilimi ve yaz saati bilinmediği için öğle anı her gün Diyanet'in o günkü
+# güneş doğuşu ve batışının tam ortasından alınır (Diyanet doğuşu 7 dk erken, batışı
+# 7 dk geç verdiği için orta nokta değişmez). Böylece her ülkede, yaz saati dahil, doğru olur.
+
+DIYANET_GUNES_TEMKIN = 7 / 60  # saat
+
+
+def _saat(metin):
+    return int(metin[:2]) + int(metin[3:]) / 60
 
 
 def _julyen(gun):
@@ -321,23 +764,37 @@ def _gunes(jd):
 
 
 def _saat_acisi(yukseklik, deklinasyon, enlem):
-    """Güneşin verilen yüksekliğe (derece) geldiği an ile öğle arasındaki süre (saat)."""
+    """Güneşin verilen yüksekliğe (derece) geldiği an ile öğle arasındaki süre (saat).
+
+    Güneş o yüksekliğe hiç ulaşmıyorsa (kutuplara yakın yerlerde yazın) None döner.
+    """
     x = ((math.sin(math.radians(yukseklik)) - math.sin(deklinasyon) * math.sin(enlem))
          / (math.cos(deklinasyon) * math.cos(enlem)))
-    return math.degrees(math.acos(max(-1.0, min(1.0, x)))) / 15
+    if not -1.0 <= x <= 1.0:
+        return None
+    return math.degrees(math.acos(x)) / 15
 
 
-def astronomik_vakitler(gun, enlem, boylam, yontem, ramazan=False):
-    """Verilen gün için 6 vakti ["HH:MM", ...] olarak hesaplar."""
+def ogle_farki(gun, diyanet_saatleri):
+    """O gün için yerel saat ile güneş saati arasındaki fark (saat dilimi + yaz saati - boylam)."""
+    orta = (_saat(diyanet_saatleri[1]) + _saat(diyanet_saatleri[4])) / 2
+    return orta + _gunes(_julyen(gun) + 0.5)[1] - 12
+
+
+def astronomik_vakitler(gun, enlem, fark, yontem, ramazan=False):
+    """Verilen gün için 6 vakti ["HH:MM", ...] olarak hesaplar; hesaplanamazsa None.
+
+    fark: ogle_farki() ile bulunan, yerel saatle güneş saati arasındaki fark.
+    """
     ayar = YONTEMLER[yontem]
     jd0 = _julyen(gun)
     enlem_r = math.radians(enlem)
 
     def gunes_an(saat):
-        return _gunes(jd0 + (saat - SAAT_DILIMI) / 24)
+        return _gunes(jd0 + (saat - fark) / 24)
 
     def ogle(saat):
-        return 12 + SAAT_DILIMI - boylam / 15 - gunes_an(saat)[1]
+        return 12 + fark - gunes_an(saat)[1]
 
     def vakit(saat, yukseklik, yon):
         # iki tur: önce tahmini saatte, sonra bulunan saatte güneşin konumuyla
@@ -347,16 +804,29 @@ def astronomik_vakitler(gun, enlem, boylam, yontem, ramazan=False):
                 yuk = math.degrees(math.atan(1 / (1 + math.tan(abs(enlem_r - dek)))))
             else:
                 yuk = yukseklik
-            saat = ogle(saat) + yon * _saat_acisi(yuk, dek, enlem_r)
+            aci = _saat_acisi(yuk, dek, enlem_r)
+            if aci is None:
+                return None
+            saat = ogle(saat) + yon * aci
         return saat
 
     oglen = ogle(12)
-    imsak = vakit(5, -ayar["fecir"], -1)
     gunes = vakit(6, -0.833, -1)
-    ikindi = vakit(15, "ikindi", 1)
     aksam = vakit(18, -0.833, 1)
+    ikindi = vakit(15, "ikindi", 1)
+    if None in (gunes, aksam, ikindi):
+        return None  # güneşin doğmadığı/batmadığı günler: Diyanet vakitleri kullanılır
+    # Yüksek enlem kuralı: fecir/yatsı, gecenin (açı/60) payından uzağa düşmesin
+    gece = 24 - (aksam - gunes)
+    imsak = vakit(5, -ayar["fecir"], -1)
+    pay = ayar["fecir"] / 60 * gece
+    if imsak is None or gunes - imsak > pay:
+        imsak = gunes - pay
     if "yatsi" in ayar:
         yatsi = vakit(20, -ayar["yatsi"], 1)
+        pay = ayar["yatsi"] / 60 * gece
+        if yatsi is None or yatsi - aksam > pay:
+            yatsi = aksam + pay
     else:
         yatsi = aksam + (ayar["yatsi_dk_ramazan"] if ramazan else ayar["yatsi_dk"]) / 60
 
@@ -366,27 +836,24 @@ def astronomik_vakitler(gun, enlem, boylam, yontem, ramazan=False):
     return [metin(s) for s in (imsak, gunes, oglen, ikindi, aksam, yatsi)]
 
 
-def konum_tahmini(gunler):
-    """Diyanet'in güneş doğuşu/batışı saatlerinden ilçenin (enlem, boylam) tahmini.
+def enlem_tahmini(gunler):
+    """Diyanet'in güneş doğuşu/batışı saatlerinden yerin enlemi (gün uzunluğu enleme bağlıdır).
 
-    Doğuşla batışın ortası gerçek öğledir (boylamı verir); gün uzunluğu enlemi verir.
     Ekinoks yakınında gün uzunluğu enlemden pek etkilenmediği için o günler kullanılmaz.
     """
-    boylamlar, enlemler = [], []
+    enlemler = []
     for tarih, saatler in gunler.items():
         try:
             gun = dt.date.fromisoformat(tarih)
-            dogus = int(saatler[1][:2]) + int(saatler[1][3:]) / 60 + DIYANET_GUNES_TEMKIN
-            batis = int(saatler[4][:2]) + int(saatler[4][3:]) / 60 - DIYANET_GUNES_TEMKIN
+            dogus = _saat(saatler[1]) + DIYANET_GUNES_TEMKIN
+            batis = _saat(saatler[4]) - DIYANET_GUNES_TEMKIN
         except (ValueError, IndexError):
             continue
-        orta = (dogus + batis) / 2
-        dek, zd = _gunes(_julyen(gun) + (orta - SAAT_DILIMI) / 24)
-        boylamlar.append(15 * (12 + SAAT_DILIMI - zd - orta))
-        if abs(math.degrees(dek)) < 12:
+        dek = _gunes(_julyen(gun) + 0.5)[0]
+        if abs(math.degrees(dek)) < 12 or not 0 < batis - dogus < 24:
             continue
         hedef = math.cos(math.radians(15 * (batis - dogus) / 2))
-        alt, ust = -65.0, 65.0
+        alt, ust = -70.0, 70.0
         for _ in range(40):  # ikiye bölme ile enlemi bul
             orta_enlem = (alt + ust) / 2
             e = math.radians(orta_enlem)
@@ -398,11 +865,10 @@ def konum_tahmini(gunler):
             else:
                 ust = orta_enlem
         enlemler.append((alt + ust) / 2)
-    if not boylamlar or not enlemler:
+    if not enlemler:
         return None
-    boylamlar.sort()
     enlemler.sort()
-    return enlemler[len(enlemler) // 2], boylamlar[len(boylamlar) // 2]
+    return enlemler[len(enlemler) // 2]
 
 
 # ---------------------------------------------------------------- çizim yardımcıları
@@ -462,16 +928,34 @@ def hilal_resmi(R, renk, zemin):
     return img
 
 
-def yuvarlak_kutu(canvas, x1, y1, x2, y2, r, **kw):
-    r = min(r, (x2 - x1) / 2, (y2 - y1) / 2)
-    noktalar = []
-    # her köşe için çeyrek daire üzerindeki noktalar
-    for cx, cy, bas in ((x2 - r, y1 + r, -90), (x2 - r, y2 - r, 0),
-                        (x1 + r, y2 - r, 90), (x1 + r, y1 + r, 180)):
-        for i in range(9):
-            a = math.radians(bas + i * 90 / 8)
-            noktalar += [cx + r * math.cos(a), cy + r * math.sin(a)]
-    return canvas.create_polygon(noktalar, **kw)
+_kutu_sayaci = 0
+
+
+def _dolu_kutu(canvas, x1, y1, x2, y2, r, renk, etiket):
+    """Köşeleri gerçek daire olan dolu kutu (x2, y2 dahil). Çokgen yerine Windows'un
+    daire çizimi kullanıldığı için kenarlar küçük boyutta da basamaklı görünmez."""
+    d = 2 * r
+    ayar = {"fill": renk, "outline": "", "tags": etiket}
+    for ox, oy in ((x1, y1), (x2 + 1 - d, y1), (x1, y2 + 1 - d), (x2 + 1 - d, y2 + 1 - d)):
+        # Tk dolu dairenin sağ/alt kenar pikselini de boyar: d çaplı daire için bitiş ox+d-1
+        canvas.create_oval(ox, oy, ox + d - 1, oy + d - 1, **ayar)
+    canvas.create_rectangle(x1 + r, y1, x2 + 1 - r, y2 + 1, **ayar)
+    canvas.create_rectangle(x1, y1 + r, x2 + 1, y2 + 1 - r, **ayar)
+
+
+def yuvarlak_kutu(canvas, x1, y1, x2, y2, r, fill, outline=""):
+    """Yuvarlak köşeli kutu çizer; tüm parçaları taşıyan etiketi döner."""
+    global _kutu_sayaci
+    _kutu_sayaci += 1
+    etiket = f"kutu{_kutu_sayaci}"
+    x1, y1, x2, y2 = round(x1), round(y1), round(x2), round(y2)
+    r = int(min(r, (x2 - x1 + 1) / 2, (y2 - y1 + 1) / 2))
+    if outline:  # 1 piksellik çerçeve: dışta çerçeve rengi, 1 piksel içeride zemin
+        _dolu_kutu(canvas, x1, y1, x2, y2, r, outline, etiket)
+        _dolu_kutu(canvas, x1 + 1, y1 + 1, x2 - 1, y2 - 1, max(0, r - 1), fill, etiket)
+    else:
+        _dolu_kutu(canvas, x1, y1, x2, y2, r, fill, etiket)
+    return etiket
 
 
 # ---------------------------------------------------------------- Windows
@@ -714,6 +1198,12 @@ class EzanVakti:
         self.fonts = {}
         self._hesaplanan = (None, {})  # (anahtar, astronomik yöntemle hesaplanmış vakitler)
         self._konum = (None, None)  # (anahtar, ilçenin tahmini (enlem, boylam))
+        self.hadisler = hadis_onbellegi()  # indirilmiş ham hadis metinleri
+        self.hadis_iniyor = False
+        self.son_hadisler = []  # aynı hadis kısa sürede tekrar gelmesin
+        self.hadis_fired = set()
+        self.hadis_hedef = None
+        self.balon = None
 
         self.root = tk.Tk()
         self.root.overrideredirect(True)
@@ -736,6 +1226,7 @@ class EzanVakti:
         self.root.bind("<B1-Motion>", self.drag_move)
         self.root.bind("<ButtonRelease-1>", self.drag_end)
         self.root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
+        self.root.bind("<Double-Button-1>", lambda e: self.open_settings())  # menüyü bulamayanlar için
         self.root.bind("<Control-MouseWheel>", self.wheel_resize)
 
         self.apply_config()
@@ -743,6 +1234,8 @@ class EzanVakti:
         self.tick()
         if not self.cfg["district_url"]:
             self.root.after(300, self.open_settings)
+        if self.cfg["hadis_on"]:  # açılışı yavaşlatmasın diye biraz sonra
+            self.root.after(5000, self.hadis_indirmeyi_baslat)
 
     # -------------------------------------------------- yardımcılar
 
@@ -781,6 +1274,7 @@ class EzanVakti:
         self.expanded_var = tk.BooleanVar(value=self.cfg["expanded"])
         self.menu.add_checkbutton(label=self.t("menu_toggle"), variable=self.expanded_var,
                                   command=self.toggle_expanded)
+        self.menu.add_command(label=self.t("menu_hadith"), command=lambda: self.hadis_goster(manuel=True))
         self.menu.add_command(label=self.t("menu_refresh"), command=lambda: self.fetch(force=True))
         self.menu.add_separator()
         self.menu.add_command(label=self.t("menu_quit"), command=self.quit)
@@ -1180,23 +1674,27 @@ class EzanVakti:
         yontem = self.cfg["calc"]
         if yontem not in YONTEMLER or not gunler:
             return gunler
-        # İlçenin konumu Diyanet vakitlerinden bir kez çıkarılır
+        # Yerin enlemi Diyanet vakitlerinden bir kez çıkarılır
         konum_anahtar = (self.cfg["district_id"], id(gunler))
         if self._konum[0] != konum_anahtar:
-            self._konum = (konum_anahtar, konum_tahmini(gunler))
-        if not self._konum[1]:
+            self._konum = (konum_anahtar, enlem_tahmini(gunler))
+        enlem = self._konum[1]
+        if enlem is None:
             return gunler
         # Sadece dün, bugün ve yarın hesaplanır; gün değişene kadar saklanır
         bugun = dt.date.today()
         anahtar = (konum_anahtar, yontem, bugun)
         if self._hesaplanan[0] != anahtar:
-            enlem, boylam = self._konum[1]
             hicri = self.cache.get("hijri", {})
             hesap = {}
-            for fark in (-1, 0, 1):
-                gun = bugun + dt.timedelta(days=fark)
+            for gun_farki in (-1, 0, 1):
+                gun = bugun + dt.timedelta(days=gun_farki)
+                diyanet = gunler.get(gun.isoformat())
+                if not diyanet:
+                    continue
                 ramazan = "Ramazan" in hicri.get(gun.isoformat(), "")
-                hesap[gun.isoformat()] = astronomik_vakitler(gun, enlem, boylam, yontem, ramazan)
+                hesap[gun.isoformat()] = astronomik_vakitler(
+                    gun, enlem, ogle_farki(gun, diyanet), yontem, ramazan) or diyanet
             self._hesaplanan = (anahtar, hesap)
         return self._hesaplanan[1]
 
@@ -1250,12 +1748,78 @@ class EzanVakti:
                 self.place_window()
 
         if hedef:
-            self.check_alarm(hedef[0], hedef[1], (hedef[1] - now).total_seconds(), now)
+            kalan = (hedef[1] - now).total_seconds()
+            self.check_alarm(hedef[0], hedef[1], kalan, now)
+            self.check_hadis(hedef[0], hedef[1], kalan, now)
+
+    # -------------------------------------------------- hadisler
+
+    def check_hadis(self, ad, zaman, kalan, now):
+        """Uyarı anında (vakte ayarlanan dakika kala) ve vakit girdiğinde hadis gösterir."""
+        if not self.cfg["hadis_on"]:
+            return
+        onceki = self.hadis_hedef
+        self.hadis_hedef = (ad, zaman)
+        if onceki and onceki[1] != zaman and yeni_girdi(onceki[1], now) and onceki[0] != "Güneş":
+            self.hadis_goster()  # vakit girdi
+            return
+        if ad == "Güneş":  # güneşin doğuşu namaz vakti değil
+            return
+        esik = self.cfg["alarm_minutes"] * 60
+        anahtar = zaman.isoformat()
+        if esik - 30 < kalan <= esik and anahtar not in self.hadis_fired:
+            self.hadis_fired.add(anahtar)
+            hicri = self.cache.get("hijri", {}).get(now.date().isoformat(), "")
+            if "Ramazan" in hicri and ad in ("İmsak", "Akşam"):
+                self.hadis_goster(konular=("oruc",))  # sahur ve iftar öncesi
+            else:
+                self.hadis_goster(konular=("namaz", "abdest"))
+
+    def hadis_indirmeyi_baslat(self):
+        eksik = any(f"{k}:{n}" not in self.hadisler for k, n, _ in HADISLER)
+        if not eksik or self.hadis_iniyor:
+            return
+        self.hadis_iniyor = True
+        self.run_bg(eksik_hadisleri_indir, self.hadisler_indi, dict(self.hadisler))
+
+    def hadisler_indi(self, yeni, error):
+        self.hadis_iniyor = False
+        if yeni:
+            self.hadisler.update(yeni)
+            save_json(HADIS_FILE, {"_surum": HADIS_SURUM, "hadis": self.hadisler})
+
+    def hadis_sec(self, konular=None):
+        dil = "en" if self.cfg["language"] == "en" else "tr"
+        hazir = [h for h in HADISLER if self.hadisler.get(f"{h[0]}:{h[1]}", {}).get(dil)]
+        if konular:
+            hazir = [h for h in hazir if h[2] in konular] or hazir
+        if not hazir:
+            return None
+        tazeler = [h for h in hazir if h not in self.son_hadisler] or hazir
+        secilen = random.choice(tazeler)
+        self.son_hadisler = (self.son_hadisler + [secilen])[-20:]
+        return secilen
+
+    def hadis_goster(self, konular=None, manuel=False):
+        secilen = self.hadis_sec(konular)
+        en = self.cfg["language"] == "en"
+        if self.balon:
+            self.balon.kapat()
+        if not secilen:
+            if manuel:  # henüz indirilmedi: indirmeyi başlat, kullanıcıya söyle
+                self.hadis_indirmeyi_baslat()
+                self.balon = HadisBalonu(self, self.t("hadith_title"), self.t("hadith_wait"), "")
+            return
+        kitap, numara, _ = secilen
+        dil = "en" if en else "tr"
+        metin = hadis_ozu(self.hadisler[f"{kitap}:{numara}"][dil], dil)
+        kaynak = hadis_kaynagi(kitap, numara, en)
+        self.balon = HadisBalonu(self, self.t("hadith_title"), metin, kaynak)
 
     def check_alarm(self, ad, zaman, kalan, now):
         cfg = self.cfg
         # Vakit girdi: hedef bir sonraki vakite geçti
-        if self.last_target and self.last_target[1] != zaman and self.last_target[1] <= now:
+        if self.last_target and self.last_target[1] != zaman and yeni_girdi(self.last_target[1], now):
             onceki = self.last_target[0]
             if cfg["alarm_at_time"] and onceki in cfg["alarm_vakitler"]:
                 self.play_sound()
@@ -1288,6 +1852,53 @@ class EzanVakti:
 
 
 # ---------------------------------------------------------------- ayarlar
+
+class HadisBalonu:
+    """Sayacın yanında açılan, aynı temada küçük hadis balonu. 15 sn sonra ya da tıklayınca kapanır."""
+
+    def __init__(self, app, baslik, metin, kaynak):
+        renk, s = app.colors, app.cfg["size"]
+        w = self.win = tk.Toplevel(app.root)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        w.configure(bg=app.key)
+        w.attributes("-transparentcolor", app.key)
+        # sayaç "sadece yazı" modunda olsa bile hadis okunabilsin diye balonun hep zemini var
+        w.attributes("-alpha", max(SAYDAMLIK[app.cfg["opacity"]] or 1.0, 0.92))
+        c = tk.Canvas(w, bg=app.key, highlightthickness=0, bd=0)
+        c.pack()
+
+        genislik, pad = int(s * 21), int(s * 0.9)
+        f_baslik, f_metin, f_kaynak = app.font(s * 0.7, True), app.font(s * 0.9), app.font(s * 0.7)
+        y = pad
+        c.create_text(pad, y, text=baslik, font=f_baslik, fill=renk["warn"], anchor="nw")
+        y += f_baslik.metrics("linespace") + s * 0.3
+        oge = c.create_text(pad, y, text=metin, font=f_metin, fill=renk["fg"], anchor="nw", width=genislik)
+        y = c.bbox(oge)[3]
+        if kaynak:
+            y += s * 0.4
+            c.create_text(pad + genislik, y, text=kaynak, font=f_kaynak, fill=renk["sub"], anchor="ne")
+            y += f_kaynak.metrics("linespace")
+        W, H = genislik + 2 * pad, math.ceil(y + pad)
+        c.tag_lower(yuvarlak_kutu(c, 0, 0, W - 1, H - 1, s * 0.9, fill=renk["bg"], outline=renk["line"]))
+        c.configure(width=W, height=H)
+
+        # Sayacın üstüne (yer yoksa altına) koy; sayaç ekranın sağ yarısındaysa sağ kenarları hizala
+        mx, my = app._pos
+        mw, mh = app.root.winfo_width(), app.root.winfo_height()
+        sol, ust, sag, alt = calisma_alani(mx + mw // 2, my + mh // 2)
+        x = mx + mw - W if mx + mw / 2 > (sol + sag) / 2 else mx
+        y = my - H - 8 if my - H - 8 >= ust else my + mh + 8
+        x, y = max(sol, min(x, sag - W)), max(ust, min(y, alt - H))
+        w.geometry(f"+{int(x)}+{int(y)}")
+
+        w.bind("<Button-1>", lambda e: self.kapat())  # pencereye bağlı olay tuvalde de çalışır
+        w.after(HADIS_SURE_MS, self.kapat)
+
+    def kapat(self):
+        if self.win.winfo_exists():
+            self.win.destroy()
+
 
 class Secim:
     """Görünen adı dile göre değişen, kimliği sabit kalan açılır liste."""
@@ -1343,15 +1954,20 @@ class AyarlarPenceresi:
         genel = sekme(t("tab_general"))
         f = ttk.LabelFrame(genel, text=t("location"), padding=6)
         f.pack(fill="x")
-        ttk.Label(f, text=t("province")).grid(row=0, column=0, sticky="w", **pad)
+        ttk.Label(f, text=t("country")).grid(row=0, column=0, sticky="w", **pad)
+        self.ulke_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
+        self.ulke_cb.grid(row=0, column=1, **pad)
+        ttk.Label(f, text=t("province")).grid(row=1, column=0, sticky="w", **pad)
         self.il_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
-        self.il_cb.grid(row=0, column=1, **pad)
-        ttk.Label(f, text=t("district")).grid(row=1, column=0, sticky="w", **pad)
+        self.il_cb.grid(row=1, column=1, **pad)
+        ttk.Label(f, text=t("district")).grid(row=2, column=0, sticky="w", **pad)
         self.ilce_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
-        self.ilce_cb.grid(row=1, column=1, **pad)
+        self.ilce_cb.grid(row=2, column=1, **pad)
+        self.ulke_cb.set(c["country_name"])
         self.il_cb.set(t("loading"))
+        self.ulke_cb.bind("<<ComboboxSelected>>", lambda e: self.ulke_secildi())
         self.il_cb.bind("<<ComboboxSelected>>", lambda e: self.il_secildi())
-        self.iller, self.ilceler = [], []
+        self.ulkeler, self.iller, self.ilceler = [], [], []
 
         f = ttk.LabelFrame(genel, text=t("calc_frame"), padding=6)
         f.pack(fill="x", pady=(10, 0))
@@ -1410,6 +2026,9 @@ class AyarlarPenceresi:
         self.ses_seviyesi = tk.IntVar(value=c["volume"])
         tk.Scale(f, from_=0, to=100, orient="horizontal", length=220, variable=self.ses_seviyesi,
                  showvalue=True, resolution=5).grid(row=6, column=1, sticky="w", padx=8)
+        self.hadis_on = tk.BooleanVar(value=c["hadis_on"])
+        ttk.Checkbutton(f, text=t("hadith_on"), variable=self.hadis_on) \
+            .grid(row=7, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4))
 
         # ---- Görünüm sekmesi (değişiklikler pencerede anında görünür)
         f = sekme(t("tab_look"))
@@ -1447,13 +2066,38 @@ class AyarlarPenceresi:
         self.durum_lbl.pack(side="left")
         w.protocol("WM_DELETE_WINDOW", self.iptal)
 
-        app.run_bg(get_iller, self.iller_geldi)
+        app.run_bg(get_ulkeler, self.ulkeler_geldi)
+        ulke = c["country_id"]
+        app.run_bg(get_iller, lambda r, e: self.iller_geldi(r, e, ulke, ilk=True), ulke)
 
     # -------------------------------------------------- konum
 
-    def iller_geldi(self, iller, error):
+    def ulke_id(self):
+        i = self.ulke_cb.current()
+        return self.ulkeler[i][1] if self.ulkeler and i >= 0 else self.app.cfg["country_id"]
+
+    def ulkeler_geldi(self, ulkeler, error):
         if not self.win.winfo_exists():
             return
+        if error:  # liste alınamazsa en azından kayıtlı ülke seçili kalsın
+            ulkeler = [(self.app.cfg["country_name"], self.app.cfg["country_id"])]
+        self.ulkeler = ulkeler
+        self.ulke_cb.configure(values=[ad for ad, _ in ulkeler])
+        secili = next((i for i, (_, uid) in enumerate(ulkeler) if uid == self.app.cfg["country_id"]), 0)
+        self.ulke_cb.current(secili)
+
+    def ulke_secildi(self):
+        self.iller, self.ilceler = [], []
+        self.il_cb.configure(values=[])
+        self.ilce_cb.configure(values=[])
+        self.il_cb.set(self.app.t("loading"))
+        self.ilce_cb.set("")
+        ulke = self.ulke_id()
+        self.app.run_bg(get_iller, lambda r, e: self.iller_geldi(r, e, ulke), ulke)
+
+    def iller_geldi(self, iller, error, ulke, ilk=False):
+        if not self.win.winfo_exists() or ulke != self.ulke_id():
+            return  # bu arada başka ülke seçildi
         t = self.app.t
         if error:
             self.il_cb.set(t("net_err"))
@@ -1461,13 +2105,17 @@ class AyarlarPenceresi:
             return
         self.iller = iller
         self.il_cb.configure(values=[ad for ad, _ in iller])
-        secili = next((i for i, (_, sid) in enumerate(iller) if sid == self.app.cfg["state_id"]), None)
+        secili = None
+        if ilk:
+            secili = next((i for i, (_, sid) in enumerate(iller) if sid == self.app.cfg["state_id"]), None)
+        if secili is None and len(iller) == 1:
+            secili = 0  # eyaleti/ili olmayan ülkeler: tek seçenek kendiliğinden seçilir
         if secili is None:
             self.il_cb.set("")
             self.ilce_cb.set(t("pick_state"))
         else:
             self.il_cb.current(secili)
-            self.il_secildi(ilk=True)
+            self.il_secildi(ilk=ilk)
 
     def il_secildi(self, ilk=False):
         i = self.il_cb.current()
@@ -1476,11 +2124,13 @@ class AyarlarPenceresi:
         self.ilceler = []
         self.ilce_cb.configure(values=[])
         self.ilce_cb.set(self.app.t("loading"))
-        self.app.run_bg(get_ilceler, lambda r, e: self.ilceler_geldi(r, e, ilk), self.iller[i][1])
+        ulke, il = self.ulke_id(), self.iller[i][1]
+        self.app.run_bg(get_ilceler, lambda r, e: self.ilceler_geldi(r, e, ilk, il), ulke, il)
 
-    def ilceler_geldi(self, ilceler, error, ilk):
-        if not self.win.winfo_exists():
-            return
+    def ilceler_geldi(self, ilceler, error, ilk, il):
+        i = self.il_cb.current() if self.win.winfo_exists() else -1
+        if i < 0 or not self.iller or self.iller[i][1] != il:
+            return  # pencere kapandı ya da bu arada başka il seçildi
         if error:
             self.ilce_cb.set(self.app.t("net_err"))
             return
@@ -1565,6 +2215,9 @@ class AyarlarPenceresi:
         if self.iller and il_i >= 0 and self.ilceler and ilce_i >= 0:
             il_adi, il_id = self.iller[il_i]
             ilce_adi, ilce_id, ilce_url = self.ilceler[ilce_i]
+            ulke_i = self.ulke_cb.current()
+            if self.ulkeler and ulke_i >= 0:
+                c.update(country_name=self.ulkeler[ulke_i][0], country_id=self.ulkeler[ulke_i][1])
             c.update(state_id=il_id, state_name=il_adi,
                      district_id=ilce_id, district_name=ilce_adi, district_url=ilce_url)
         elif not c["district_url"]:
@@ -1583,7 +2236,7 @@ class AyarlarPenceresi:
                  alarm_at_time=self.alarm_at_time.get(),
                  alarm_vakitler=[ad for ad, v in self.vakit_vars.items() if v.get()],
                  sound=self.ses.get(), sound_file=self.ses_dosyasi,
-                 volume=self.ses_seviyesi.get(),
+                 volume=self.ses_seviyesi.get(), hadis_on=self.hadis_on.get(),
                  language=self.dil.get(), autostart=self.autostart.get(),
                  calc=self.hesap.get(),
                  **self.gorunum_secimleri())
@@ -1597,6 +2250,8 @@ class AyarlarPenceresi:
         if app.cache.get("district_id") != c["district_id"]:
             app.last_attempt = None
             app.fetch()
+        if c["hadis_on"]:
+            app.hadis_indirmeyi_baslat()
         return True
 
 

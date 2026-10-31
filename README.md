@@ -17,17 +17,19 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 
 - **Sıradaki vakte kalan süre**, örneğin `İkindiye 0:12`
 - **Genişletilmiş mod:** kalan süre ile birlikte günün tüm vakitleri, miladî ve hicrî tarih
-- **Türkiye'deki tüm il ve ilçeler**
-- **3 hesap yöntemi:**
+- **200'den fazla ülke:** Türkiye'deki tüm il ve ilçeler ile Diyanet'in vakit verdiği tüm ülke ve şehirler
+- **4 hesap yöntemi:**
   - Diyanet (varsayılan, resmî vakitler)
+  - Müslüman Dünya Birliği (MWL)
   - Ümmü'l-Kurâ (Mekke)
   - Mısır Genel Araştırma Kurumu
 
-  Diğer iki yöntem, ilçenin konumuna göre astronomik olarak hesaplanır.
+  Diyanet dışındaki yöntemler, şehrin konumuna göre astronomik olarak hesaplanır. Saat dilimi ve yaz saati de hesaba katılır.
 - **Sesli uyarı:**
   - Vakte kaç dakika kala çalacağı ve hangi vakitlerde çalacağı ayarlanır.
   - Ses seviyesi ayarlanır.
   - Basit sesler ve makam ezgileri (Hicaz, Uşşak, Rast) arasından seçilir; istenirse kendi `.wav` dosyan da kullanılır.
+- **Hadis balonu:** uyarı anında ve vakit girdiğinde (ya da sağ tık → "Bir hadis göster") sayacın yanında kısa bir hadis görünür; 15 saniye sonra ya da tıklayınca kapanır. Kütüb-i Sitte'den namaz, oruç, abdest, sadaka, zikir ve güzel ahlak üzerine 100 seçme hadis (konuları Riyâzü's-Sâlihîn'in bölümlerinden, bir kısmı İmam Nevevî'nin Kırk Hadis'inden), Türkçe ve İngilizce. Her hadis asıl kaynağıyla gösterilir; Buhârî ve Müslim dışındakiler yalnızca hiçbir alimin zayıf saymadığı rivayetlerdendir.
 - **3 stil:** Kart, Hap ve Klasik
 - **4 renk:** Koyu, Açık, Yeşil, Lacivert
 - **Saydamlık seçenekleri,** "sadece yazı" modu dahil
@@ -42,7 +44,7 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 
 1. [Son sürüm](../../releases/latest) sayfasından `EzanVakti.exe` dosyasını indir.
 2. Çift tıkla. Kurulum gerekmez.
-3. Açılan ayarlar penceresinden il ve ilçeni seç.
+3. Açılan ayarlar penceresinden ülke, il ve ilçeni seç.
 
 ### Güvenlik uyarısı çıkarsa
 
@@ -81,12 +83,15 @@ pyinstaller --onefile --windowed --name EzanVakti --icon ikon.ico --add-data "ik
 
 Bu uygulama gönüllü olarak geliştirilmiş, resmi olmayan bir projedir ve Diyanet İşleri Başkanlığı ile bir bağlantısı yoktur. Vakit bilgileri Diyanet'in herkese açık sitesinden okunur.
 
+Hadis metinleri uygulamanın içinde yer almaz. Uygulamada yalnızca seçilen hadislerin kaynak bilgisi (kitap ve numara) bulunur. Türkçe ve İngilizce metinler ilk kullanımda açık [hadith-api](https://github.com/fawazahmed0/hadith-api) veri setinden indirilir ve bilgisayarda saklanır (yaklaşık 75 KB). Çevirilerin hakları ilgili çevirmenlere aittir.
+
 ---
 
 ## English
 
-A tiny always-on-top prayer times widget for Windows. It shows the time left until the next prayer, using official times from the Turkish Presidency of Religious Affairs (Diyanet). It covers every province and district in Turkey and includes:
+A tiny always-on-top prayer times widget for Windows. It shows the time left until the next prayer, using official times from the Turkish Presidency of Religious Affairs (Diyanet). It covers 200+ countries and includes:
 
+- Muslim World League, Umm al-Qura and Egyptian calculation methods
 - Sound alerts
 - Three styles and four color themes
 - Adjustable transparency and size

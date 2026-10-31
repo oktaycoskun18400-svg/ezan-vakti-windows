@@ -89,7 +89,7 @@ ONIZLEME_AYARLARI = ("style", "expanded", "theme", "opacity", "size")
 STILLER = {"kart": ("Kart", "Card"), "hap": ("Hap", "Pill"), "klasik": ("Klasik", "Classic")}
 MODLAR = {"compact": ("Kompakt (sadece kalan süre)", "Compact (time left only)"),
           "extended": ("Genişletilmiş (kalan süre + tüm vakitler)", "Extended (time left + all times)")}
-SNAP = 24  # kenara bu kadar pikselden yakınsa yapışır
+SNAP = 18  # kenara bu kadar pikselden yakınsa yapışır
 SURUKLEME_ESIGI = 8  # fare bundan az oynarsa sürükleme sayılmaz
 BASILI_TUTMA_MS = 800  # olduğu yerde bu kadar basılı tutunca tüm vakitler görünür
 
@@ -113,11 +113,20 @@ METINLER = {
     "saved": ("Kaydedildi ✓", "Saved ✓"),
     "menu_refresh": ("Vakitleri şimdi yenile", "Refresh times now"),
     "menu_hadith": ("Bir hadis göster", "Show a hadith"),
+    "tz_title": ("SAAT DİLİMİ", "TIME ZONE"),
+    "tz_warn": ("Bilgisayarınızın saat dilimi, seçilen şehrin saatiyle uyuşmuyor; kalan süreler yanlış "
+                "görünebilir. Windows'un saat dilimi ayarını kontrol edin.",
+                "Your computer's time zone doesn't match the selected city, so countdowns may be off. "
+                "Check the Windows time zone setting."),
     "hadith_title": ("HADİS-İ ŞERİF", "HADITH"),
     "hadith_wait": ("Hadisler indiriliyor, biraz sonra tekrar deneyin.",
                     "Hadiths are being downloaded, please try again shortly."),
-    "hadith_on": ("Uyarı anında ve vakit girdiğinde kısa bir hadis göster",
-                  "Show a short hadith at the alert and when the time begins"),
+    "hadith_frame": (" Hadis ", " Hadith "),
+    "hadith_alert": ("Vakte belirlenen süre kala hadis göster", "Show a hadith before the prayer time"),
+    "hadith_time": ("Vakit girdiğinde hadis göster", "Show a hadith when the prayer time begins"),
+    "hadith_hint": ("Süre, yukarıdaki \"dakika kala\" ayarıdır. Sağ tık → \"Bir hadis göster\" her zaman çalışır.",
+                    "The time is the \"minutes before\" setting above. Right-click → \"Show a hadith\" "
+                    "always works."),
     "menu_quit": ("Çıkış", "Quit"),
     "choose_loc": ("Konum seçin (sağ tık)", "Choose location (right-click)"),
     "loading_times": ("Vakitler alınıyor...", "Loading times..."),
@@ -162,14 +171,15 @@ VARSAYILAN_AYARLAR = {
     "country_id": TURKIYE[1], "country_name": TURKIYE[0],
     "state_id": None, "state_name": "",
     "district_id": None, "district_name": "", "district_url": "",
-    "alarm_on": True, "alarm_minutes": 10, "alarm_at_time": False,
+    "alarm_on": True, "alarm_minutes": 10, "alarm_at_time": True,
     "alarm_vakitler": ["İmsak", "Öğle", "İkindi", "Akşam", "Yatsı"],
     "sound": "zil", "sound_file": "", "volume": 80,
     "style": "kart", "theme": "Koyu", "opacity": "Yarı saydam", "size": 13,
     "x": None, "y": None, "snap_x": "right", "snap_y": "bottom",
     "expanded": False, "autostart": False,
     "calc": "diyanet",
-    "hadis_on": True,
+    "hadis_uyari": True,  # vakte alarm_minutes kala hadis göster
+    "hadis_vakit": True,  # vakit girdiğinde hadis göster
 }
 # Vakit hesap yöntemleri: (Türkçe ad, İngilizce ad, kısa Türkçe, kısa İngilizce)
 HESAPLAR = {
@@ -189,6 +199,8 @@ YONTEMLER = {
 
 def eski_ayarlari_cevir(cfg):
     """Önceki sürümün ayar dosyasını bu sürüme uyarlar."""
+    if "hadis_on" in cfg:  # v1.2.0'daki tek hadis ayarı ikiye bölündü
+        cfg["hadis_uyari"] = cfg["hadis_vakit"] = bool(cfg.pop("hadis_on"))
     if not isinstance(cfg["size"], int):
         cfg["size"] = ESKI_BOYUTLAR.get(cfg["size"], 13)
     if cfg["sound"] == "Kendi ses dosyam (.wav)":
@@ -836,6 +848,35 @@ def astronomik_vakitler(gun, enlem, fark, yontem, ramazan=False):
     return [metin(s) for s in (imsak, gunes, oglen, ikindi, aksam, yatsi)]
 
 
+def pc_utc_farki(gun):
+    """Bilgisayarın (Windows saat dilimi ayarının) o gün öğle vaktindeki UTC farkı, saat cinsinden."""
+    an = time.mktime((gun.year, gun.month, gun.day, 12, 0, 0, 0, 0, -1))
+    return time.localtime(an).tm_gmtoff / 3600
+
+
+def saat_dilimi_uyumsuz(ulke_id, gunler):
+    """Bilgisayarın saati seçilen şehrin saatiyle uyuşmuyor mu? (Kalan süreler o zaman kayar.)
+
+    Türkiye yıl boyu UTC+3 olduğu için kesin kontrol edilir. Diğer ülkelerde şehrin yaz saati
+    geçişleri Diyanet vakitlerinden çıkarılıp bilgisayarınkiyle karşılaştırılır: düzenler farklıysa
+    "yerel saat - güneş saati" farkı yıl içinde oynar. (İkisi de yaz saati kullanmıyor ve aradaki
+    fark sabitse bu yöntem fark edemez.)
+    """
+    if not gunler:
+        return False
+    if ulke_id == TURKIYE[1]:
+        bugun = dt.date.today()
+        return any(abs(pc_utc_farki(bugun + dt.timedelta(days=i)) - 3) > 0.01 for i in range(0, 366, 7))
+    farklar = []
+    for tarih in sorted(gunler)[::7]:
+        try:
+            gun = dt.date.fromisoformat(tarih)
+            farklar.append(pc_utc_farki(gun) - ogle_farki(gun, gunler[tarih]))
+        except (ValueError, IndexError, OverflowError):
+            continue
+    return len(farklar) > 4 and max(farklar) - min(farklar) > 0.5
+
+
 def enlem_tahmini(gunler):
     """Diyanet'in güneş doğuşu/batışı saatlerinden yerin enlemi (gün uzunluğu enleme bağlıdır).
 
@@ -1234,8 +1275,10 @@ class EzanVakti:
         self.tick()
         if not self.cfg["district_url"]:
             self.root.after(300, self.open_settings)
-        if self.cfg["hadis_on"]:  # açılışı yavaşlatmasın diye biraz sonra
+        if self.cfg["hadis_uyari"] or self.cfg["hadis_vakit"]:  # açılışı yavaşlatmasın diye biraz sonra
             self.root.after(5000, self.hadis_indirmeyi_baslat)
+        self.saat_dilimi_uyarildi = False
+        self.root.after(3000, self.saat_dilimi_uyar)
 
     # -------------------------------------------------- yardımcılar
 
@@ -1298,6 +1341,12 @@ class EzanVakti:
         self.last_view = None
         self.update_display()
         self.place_window()
+        # Dil ya da görünüm değiştiyse açık balon da yeni haline geçsin (sadece genişletme gibi
+        # değişikliklerde yeniden çizilmez)
+        gorunum = tuple(self.cfg[k] for k in ("language", "theme", "opacity", "size"))
+        if gorunum != getattr(self, "_balon_gorunumu", gorunum):
+            self.balonu_yenile()
+        self._balon_gorunumu = gorunum
 
     # -------------------------------------------------- çizim
 
@@ -1556,6 +1605,8 @@ class EzanVakti:
         y = max(ust, min(y, alt - h))
         self._pos = (x, y)
         self.root.geometry(f"+{x}+{y}")
+        if self.balon:  # sayaç büyüyüp küçülünce ya da yer değiştirince balon da uysun
+            self.balon.konumla()
 
     def toggle_expanded(self):
         self.cfg["expanded"] = not self.cfg["expanded"]
@@ -1618,6 +1669,8 @@ class EzanVakti:
         self._snap = (snap_x, snap_y)
         self._pos = (x, y)
         self.root.geometry(f"+{x}+{y}")
+        if self.balon:  # açık hadis balonu sayaçla birlikte gelsin
+            self.balon.konumla()
 
     def drag_end(self, e):
         self.cancel_hold()
@@ -1657,6 +1710,9 @@ class EzanVakti:
         self.cache["fetched"] = dt.date.today().isoformat()
         save_json(CACHE_FILE, self.cache)
         self.update_display()
+        self.saat_dilimi_uyar()  # yeni şehrin vakitleri geldi: saat dilimi uyuşuyor mu?
+        if self.settings and self.settings.win.winfo_exists():
+            self.settings.saat_dilimi_etiketi()
 
     def need_fetch(self):
         if not self.cfg["district_url"] or self.fetching:
@@ -1752,18 +1808,54 @@ class EzanVakti:
             self.check_alarm(hedef[0], hedef[1], kalan, now)
             self.check_hadis(hedef[0], hedef[1], kalan, now)
 
+    # -------------------------------------------------- saat dilimi
+
+    def saat_dilimi_sorunlu(self):
+        gunler = self.cache.get("days", {}) if self.cache.get("district_id") == self.cfg["district_id"] else {}
+        return bool(self.cfg["district_url"]) and saat_dilimi_uyumsuz(self.cfg["country_id"], gunler)
+
+    def saat_dilimi_uyar(self):
+        """Bilgisayarın saat dilimi şehirle uyuşmuyorsa oturum başına bir kez küçük bir uyarı göster."""
+        if self.saat_dilimi_uyarildi or not self.saat_dilimi_sorunlu():
+            return
+        self.saat_dilimi_uyarildi = True
+        self.balon_ac(("tz",))
+
+    # -------------------------------------------------- balon
+
+    def balon_ac(self, icerik, sure_ms=HADIS_SURE_MS):
+        """İçeriği o anki dil ve görünümle balonda gösterir (varsa eski balonu hemen kapatır)."""
+        if self.balon:
+            self.balon.kapat(aninda=True)
+        en = self.cfg["language"] == "en"
+        if icerik[0] == "tz":
+            baslik, metin, kaynak = self.t("tz_title"), self.t("tz_warn"), ""
+        elif icerik[0] == "bekle":
+            baslik, metin, kaynak = self.t("hadith_title"), self.t("hadith_wait"), ""
+        else:
+            _, kitap, numara = icerik
+            dil = "en" if en else "tr"
+            baslik = self.t("hadith_title")
+            metin = hadis_ozu(self.hadisler[f"{kitap}:{numara}"][dil], dil)
+            kaynak = hadis_kaynagi(kitap, numara, en)
+        self.balon = HadisBalonu(self, baslik, metin, kaynak, icerik, sure_ms)
+
+    def balonu_yenile(self):
+        """Dil ya da görünüm değişti: açık balonu aynı içerik ve kalan süreyle yeniden çiz."""
+        if self.balon and self.balon.acik() and self.balon.icerik:
+            self.balon_ac(self.balon.icerik, self.balon.kalan_ms())
+
     # -------------------------------------------------- hadisler
 
     def check_hadis(self, ad, zaman, kalan, now):
-        """Uyarı anında (vakte ayarlanan dakika kala) ve vakit girdiğinde hadis gösterir."""
-        if not self.cfg["hadis_on"]:
-            return
+        """Vakte ayarlanan dakika kala (hadis_uyari) ve vakit girdiğinde (hadis_vakit) hadis gösterir."""
         onceki = self.hadis_hedef
         self.hadis_hedef = (ad, zaman)
         if onceki and onceki[1] != zaman and yeni_girdi(onceki[1], now) and onceki[0] != "Güneş":
-            self.hadis_goster()  # vakit girdi
+            if self.cfg["hadis_vakit"]:
+                self.hadis_goster()  # vakit girdi
             return
-        if ad == "Güneş":  # güneşin doğuşu namaz vakti değil
+        if ad == "Güneş" or not self.cfg["hadis_uyari"]:  # güneşin doğuşu namaz vakti değil
             return
         esik = self.cfg["alarm_minutes"] * 60
         anahtar = zaman.isoformat()
@@ -1802,19 +1894,12 @@ class EzanVakti:
 
     def hadis_goster(self, konular=None, manuel=False):
         secilen = self.hadis_sec(konular)
-        en = self.cfg["language"] == "en"
-        if self.balon:
-            self.balon.kapat()
         if not secilen:
             if manuel:  # henüz indirilmedi: indirmeyi başlat, kullanıcıya söyle
                 self.hadis_indirmeyi_baslat()
-                self.balon = HadisBalonu(self, self.t("hadith_title"), self.t("hadith_wait"), "")
+                self.balon_ac(("bekle",))
             return
-        kitap, numara, _ = secilen
-        dil = "en" if en else "tr"
-        metin = hadis_ozu(self.hadisler[f"{kitap}:{numara}"][dil], dil)
-        kaynak = hadis_kaynagi(kitap, numara, en)
-        self.balon = HadisBalonu(self, self.t("hadith_title"), metin, kaynak)
+        self.balon_ac(("hadis", secilen[0], secilen[1]))
 
     def check_alarm(self, ad, zaman, kalan, now):
         cfg = self.cfg
@@ -1854,17 +1939,27 @@ class EzanVakti:
 # ---------------------------------------------------------------- ayarlar
 
 class HadisBalonu:
-    """Sayacın yanında açılan, aynı temada küçük hadis balonu. 15 sn sonra ya da tıklayınca kapanır."""
+    """Sayacın yanında açılan, aynı temada küçük hadis balonu. Süresi dolunca ya da tıklayınca
+    yavaşça solarak kapanır.
 
-    def __init__(self, app, baslik, metin, kaynak):
+    icerik: balonda ne gösterildiği ("hadis", kitap, numara) / ("tz",) / ("bekle",); dil ya da
+    görünüm değişince aynı içerik yeni haliyle yeniden açılabilsin diye saklanır.
+    """
+
+    SOLMA_MS, SOLMA_HIZLI_MS, SOLMA_ADIM = 500, 200, 12
+
+    def __init__(self, app, baslik, metin, kaynak, icerik=None, sure_ms=HADIS_SURE_MS):
         renk, s = app.colors, app.cfg["size"]
+        self.icerik, self.kapaniyor = icerik, False
+        self.bitis = time.monotonic() + sure_ms / 1000
         w = self.win = tk.Toplevel(app.root)
         w.overrideredirect(True)
         w.attributes("-topmost", True)
         w.configure(bg=app.key)
         w.attributes("-transparentcolor", app.key)
         # sayaç "sadece yazı" modunda olsa bile hadis okunabilsin diye balonun hep zemini var
-        w.attributes("-alpha", max(SAYDAMLIK[app.cfg["opacity"]] or 1.0, 0.92))
+        self.alfa = max(SAYDAMLIK[app.cfg["opacity"]] or 1.0, 0.92)
+        w.attributes("-alpha", self.alfa)
         c = tk.Canvas(w, bg=app.key, highlightthickness=0, bd=0)
         c.pack()
 
@@ -1883,21 +1978,58 @@ class HadisBalonu:
         c.tag_lower(yuvarlak_kutu(c, 0, 0, W - 1, H - 1, s * 0.9, fill=renk["bg"], outline=renk["line"]))
         c.configure(width=W, height=H)
 
-        # Sayacın üstüne (yer yoksa altına) koy; sayaç ekranın sağ yarısındaysa sağ kenarları hizala
+        # Sayaç ekranın sağ yarısındaysa sağ kenarları, değilse sol kenarları hizala. Bu seçim balon
+        # açıkken sabit kalır; sürüklerken ekranın ortasından geçince balon yana sıçramasın.
+        self.app, self.boyut = app, (W, H)
+        mx, mw = app._pos[0], app.root.winfo_width()
+        sol, _, sag, _ = calisma_alani(mx + mw // 2, app._pos[1])
+        self.sag_hizali = mx + mw / 2 > (sol + sag) / 2
+        self.konumla()
+
+        w.bind("<Button-1>", lambda e: self.kapat(hizli=True))  # pencereye bağlı olay tuvalde de çalışır
+        w.after(max(0, int(sure_ms)), self.kapat)
+
+    def konumla(self):
+        """Balonu sayacın üstüne (yer yoksa altına) koyar; sayaç sürüklendikçe tekrar çağrılır."""
+        if not self.win.winfo_exists():
+            return
+        app, (W, H) = self.app, self.boyut
         mx, my = app._pos
         mw, mh = app.root.winfo_width(), app.root.winfo_height()
         sol, ust, sag, alt = calisma_alani(mx + mw // 2, my + mh // 2)
-        x = mx + mw - W if mx + mw / 2 > (sol + sag) / 2 else mx
+        x = mx + mw - W if self.sag_hizali else mx
         y = my - H - 8 if my - H - 8 >= ust else my + mh + 8
         x, y = max(sol, min(x, sag - W)), max(ust, min(y, alt - H))
-        w.geometry(f"+{int(x)}+{int(y)}")
+        self.win.geometry(f"+{int(x)}+{int(y)}")
 
-        w.bind("<Button-1>", lambda e: self.kapat())  # pencereye bağlı olay tuvalde de çalışır
-        w.after(HADIS_SURE_MS, self.kapat)
+    def acik(self):
+        return not self.kapaniyor and bool(self.win.winfo_exists())
 
-    def kapat(self):
-        if self.win.winfo_exists():
+    def kalan_ms(self):
+        return max(0, int((self.bitis - time.monotonic()) * 1000))
+
+    def kapat(self, hizli=False, aninda=False):
+        """Balonu kapatır: normalde yarım saniyede solarak, tıklanınca daha hızlı.
+        aninda: yerine hemen yenisi açılacaksa (dil değişimi, yeni hadis) solma beklenmez."""
+        if not self.win.winfo_exists():
+            return
+        if aninda:
             self.win.destroy()
+            return
+        if self.kapaniyor:
+            return
+        self.kapaniyor = True
+        sure = self.SOLMA_HIZLI_MS if hizli else self.SOLMA_MS
+        self._sol(1, sure // self.SOLMA_ADIM)
+
+    def _sol(self, adim, aralik):
+        if not self.win.winfo_exists():
+            return
+        if adim >= self.SOLMA_ADIM:
+            self.win.destroy()
+            return
+        self.win.attributes("-alpha", self.alfa * (1 - adim / self.SOLMA_ADIM))
+        self.win.after(aralik, self._sol, adim + 1, aralik)
 
 
 class Secim:
@@ -1963,6 +2095,9 @@ class AyarlarPenceresi:
         ttk.Label(f, text=t("district")).grid(row=2, column=0, sticky="w", **pad)
         self.ilce_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
         self.ilce_cb.grid(row=2, column=1, **pad)
+        self.tz_lbl = ttk.Label(f, foreground="#b3261e", wraplength=330, justify="left")
+        self.tz_lbl.grid(row=3, column=0, columnspan=2, sticky="w", padx=8)
+        self.saat_dilimi_etiketi()
         self.ulke_cb.set(c["country_name"])
         self.il_cb.set(t("loading"))
         self.ulke_cb.bind("<<ComboboxSelected>>", lambda e: self.ulke_secildi())
@@ -2026,9 +2161,14 @@ class AyarlarPenceresi:
         self.ses_seviyesi = tk.IntVar(value=c["volume"])
         tk.Scale(f, from_=0, to=100, orient="horizontal", length=220, variable=self.ses_seviyesi,
                  showvalue=True, resolution=5).grid(row=6, column=1, sticky="w", padx=8)
-        self.hadis_on = tk.BooleanVar(value=c["hadis_on"])
-        ttk.Checkbutton(f, text=t("hadith_on"), variable=self.hadis_on) \
-            .grid(row=7, column=0, columnspan=2, sticky="w", padx=8, pady=(8, 4))
+        hf = ttk.LabelFrame(f, text=t("hadith_frame"), padding=6)
+        hf.grid(row=7, column=0, columnspan=2, sticky="we", padx=8, pady=(10, 4))
+        self.hadis_uyari = tk.BooleanVar(value=c["hadis_uyari"])
+        self.hadis_vakit = tk.BooleanVar(value=c["hadis_vakit"])
+        ttk.Checkbutton(hf, text=t("hadith_alert"), variable=self.hadis_uyari).pack(anchor="w", pady=2)
+        ttk.Checkbutton(hf, text=t("hadith_time"), variable=self.hadis_vakit).pack(anchor="w", pady=2)
+        ttk.Label(hf, text=t("hadith_hint"), foreground="#666", wraplength=340, justify="left") \
+            .pack(anchor="w", pady=(2, 0))
 
         # ---- Görünüm sekmesi (değişiklikler pencerede anında görünür)
         f = sekme(t("tab_look"))
@@ -2071,6 +2211,10 @@ class AyarlarPenceresi:
         app.run_bg(get_iller, lambda r, e: self.iller_geldi(r, e, ulke, ilk=True), ulke)
 
     # -------------------------------------------------- konum
+
+    def saat_dilimi_etiketi(self):
+        """Kayıtlı şehir için saat dilimi uyarısını göster ya da gizle."""
+        self.tz_lbl.configure(text=("⚠ " + self.app.t("tz_warn")) if self.app.saat_dilimi_sorunlu() else "")
 
     def ulke_id(self):
         i = self.ulke_cb.current()
@@ -2205,6 +2349,7 @@ class AyarlarPenceresi:
             return
         self.orijinal = {k: self.app.cfg[k] for k in ONIZLEME_AYARLARI}
         self.baslik_konum.configure(text=self.app.konum_adi())
+        self.saat_dilimi_etiketi()
         self.durum_lbl.configure(text=self.app.t("saved"))
         self.win.after(2000, lambda: self.win.winfo_exists() and self.durum_lbl.configure(text=""))
 
@@ -2236,7 +2381,8 @@ class AyarlarPenceresi:
                  alarm_at_time=self.alarm_at_time.get(),
                  alarm_vakitler=[ad for ad, v in self.vakit_vars.items() if v.get()],
                  sound=self.ses.get(), sound_file=self.ses_dosyasi,
-                 volume=self.ses_seviyesi.get(), hadis_on=self.hadis_on.get(),
+                 volume=self.ses_seviyesi.get(),
+                 hadis_uyari=self.hadis_uyari.get(), hadis_vakit=self.hadis_vakit.get(),
                  language=self.dil.get(), autostart=self.autostart.get(),
                  calc=self.hesap.get(),
                  **self.gorunum_secimleri())
@@ -2250,7 +2396,7 @@ class AyarlarPenceresi:
         if app.cache.get("district_id") != c["district_id"]:
             app.last_attempt = None
             app.fetch()
-        if c["hadis_on"]:
+        if c["hadis_uyari"] or c["hadis_vakit"]:
             app.hadis_indirmeyi_baslat()
         return True
 

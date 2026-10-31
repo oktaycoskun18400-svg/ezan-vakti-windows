@@ -29,11 +29,12 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
   - Vakte kaç dakika kala çalacağı ve hangi vakitlerde çalacağı ayarlanır.
   - Ses seviyesi ayarlanır.
   - Basit sesler ve makam ezgileri (Hicaz, Uşşak, Rast) arasından seçilir; istenirse kendi `.wav` dosyan da kullanılır.
-- **Hadis balonu:** uyarı anında ve vakit girdiğinde (ya da sağ tık → "Bir hadis göster") sayacın yanında kısa bir hadis görünür; 15 saniye sonra ya da tıklayınca kapanır. Kütüb-i Sitte'den namaz, oruç, abdest, sadaka, zikir ve güzel ahlak üzerine 100 seçme hadis (konuları Riyâzü's-Sâlihîn'in bölümlerinden, bir kısmı İmam Nevevî'nin Kırk Hadis'inden), Türkçe ve İngilizce. Her hadis asıl kaynağıyla gösterilir; Buhârî ve Müslim dışındakiler yalnızca hiçbir alimin zayıf saymadığı rivayetlerdendir.
+- **Hadis balonu:** vakte belirlenen süre kala, vakit girdiğinde (ikisi ayrı ayrı açılıp kapatılabilir) ya da sağ tık → "Bir hadis göster" ile sayacın yanında kısa bir hadis görünür. Sayaçla birlikte hareket eder, dil değişince hadis de çevrilir; 15 saniye sonra ya da tıklayınca solarak kapanır. Kütüb-i Sitte'den namaz, oruç, abdest, sadaka, zikir ve güzel ahlak üzerine 100 seçme hadis (konuları Riyâzü's-Sâlihîn'in bölümlerinden, bir kısmı İmam Nevevî'nin Kırk Hadis'inden), Türkçe ve İngilizce. Her hadis asıl kaynağıyla gösterilir; Buhârî ve Müslim dışındakiler yalnızca hiçbir alimin zayıf saymadığı rivayetlerdendir.
 - **3 stil:** Kart, Hap ve Klasik
 - **4 renk:** Koyu, Açık, Yeşil, Lacivert
 - **Saydamlık seçenekleri,** "sadece yazı" modu dahil
 - **Serbest boyut:** ayarlardan ya da pencere üzerinde `Ctrl` + fare tekerleği ile
+- **Saat dilimi kontrolü:** bilgisayarın saat dilimi seçilen şehirle uyuşmuyorsa uyarır
 - **Ekran kenarlarına yapışma:** yapışık kenarda kalır, birden fazla ekranda da çalışır
 - **Türkçe ve İngilizce**
 - **İnternet kesilse de çalışır:** yaklaşık bir yıllık vakit bilgisayara kaydedilir

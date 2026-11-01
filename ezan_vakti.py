@@ -91,13 +91,13 @@ BOYUT_MIN, BOYUT_MAX = 8, 40
 # ses kimliği: (Türkçe ad, İngilizce ad) - dahili sesler uygulama içinde üretilir
 SESLER = {
     "ezan":   ("Ezan: Hayye ale's-salâh", "Adhan: Hayya 'ala's-salah"),
-    "zil":    ("Yumuşak zil", "Soft chime"),
     "ding":   ("Tek ding", "Single ding"),
+    "bip":    ("Üç kısa bip", "Three short beeps"),
     "hicaz":  ("Hicaz ezgisi (ney)", "Hijaz melody (ney)"),
     "ussak":  ("Uşşak ezgisi (ney)", "Ushshaq melody (ney)"),
     "custom": ("Kendi ses dosyam (mp3, wav...)", "My own sound file (mp3, wav...)"),
 }
-KALDIRILAN_SESLER = {"bip": "ding", "rast": "hicaz"}
+KALDIRILAN_SESLER = {"zil": "ding", "rast": "hicaz"}
 ONIZLEME_AYARLARI = ("style", "expanded", "theme", "opacity", "size")
 # kimlikler ayar dosyasında saklandığı için değişmez, sadece görünen adlar değişebilir
 STILLER = {"kart": ("Levha", "Plaque"), "hap": ("Hilal", "Crescent"), "klasik": ("Takvim", "Almanac")}
@@ -201,7 +201,7 @@ VARSAYILAN_AYARLAR = {
     "district_id": None, "district_name": "", "district_url": "",
     "alarm_on": True, "alarm_minutes": 10, "alarm_at_time": True,
     "alarm_vakitler": ["İmsak", "Öğle", "İkindi", "Akşam", "Yatsı"],
-    "sound": "zil", "sound_file": "", "volume": 40,
+    "sound": "ding", "sound_file": "", "volume": 40,
     "style": "kart", "theme": VARSAYILAN_TEMA, "opacity": "Yarı saydam", "size": 20,
     "x": None, "y": None, "snap_x": "right", "snap_y": "bottom",
     "expanded": False, "autostart": False,
@@ -237,7 +237,7 @@ def eski_ayarlari_cevir(cfg):
         cfg["sound"] = "custom"
     cfg["sound"] = KALDIRILAN_SESLER.get(cfg["sound"], cfg["sound"])  # 0.5.2'de çıkarılan sesler
     if cfg["sound"] not in SESLER:
-        cfg["sound"] = "zil"
+        cfg["sound"] = "ding"
     if cfg["style"] not in STILLER:
         cfg["style"] = "kart"
     if cfg["theme"] not in TEMALAR:
@@ -1453,12 +1453,19 @@ def _can_notasi(frekans, sure, sonum=3.2):
     return ornekler
 
 
-def ses_zil():
-    return _pcm(_can_notasi(659.25, 0.9) + _can_notasi(523.25, 1.6))
-
-
 def ses_ding():
     return _pcm(_yanki(_can_notasi(880.0, 1.8, sonum=2.4), 0.18))
+
+
+def ses_bip():
+    ornekler = []
+    for _ in range(3):
+        for i in range(int(HZ * 0.13)):
+            t = i / HZ
+            zarf = min(1.0, t * 300, (0.13 - t) * 300)
+            ornekler.append(math.sin(2 * math.pi * 988 * t) * zarf)
+        ornekler += [0.0] * int(HZ * 0.11)
+    return _pcm(ornekler)
 
 
 def ses_ezan():
@@ -1521,11 +1528,11 @@ _uretilen = {}
 def dahili_ses(kimlik):
     """Dahili sesi bir kez üretir, sonra hafızadan verir."""
     if kimlik not in _uretilen:
-        _uretilen[kimlik] = SES_URETICILER.get(kimlik, ses_zil)()
+        _uretilen[kimlik] = SES_URETICILER.get(kimlik, ses_ding)()
     return _uretilen[kimlik]
 
 
-SES_URETICILER = {"ezan": ses_ezan, "zil": ses_zil, "ding": ses_ding, "hicaz": ses_hicaz, "ussak": ses_ussak}
+SES_URETICILER = {"ezan": ses_ezan, "ding": ses_ding, "bip": ses_bip, "hicaz": ses_hicaz, "ussak": ses_ussak}
 
 
 def sesi_kis(genislik, veri, carpan):
@@ -2947,7 +2954,7 @@ class AyarlarPenceresi:
             if yol:
                 self.ses_dosyasi = yol
             elif not self.ses_dosyasi:
-                self.ses.set("zil")
+                self.ses.set("ding")
         self.dosya_etiketi()
 
     def dosya_etiketi(self):

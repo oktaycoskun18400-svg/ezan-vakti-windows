@@ -28,7 +28,7 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 - **Sesli uyarı:**
   - Vakte kaç dakika kala çalacağı ve hangi vakitlerde çalacağı ayarlanır.
   - Ses seviyesi ayarlanır.
-  - Basit sesler ve makam ezgileri (Hicaz, Uşşak, Rast) arasından seçilir; istenirse kendi ses dosyan da (mp3, wav, m4a, wma...) kullanılır.
+  - Ezandan "Hayye ale's-salâh" bölümü, basit sesler ve makam ezgileri (Hicaz, Uşşak) arasından seçilir; istenirse kendi ses dosyan da (mp3, wav, m4a, wma...) kullanılır.
 - **Hadis balonu:** Kütüb-i Sitte'den namaz, oruç, abdest, sadaka, zikir ve güzel ahlak konularında kısa hadisler gösterilir.
 - **3 stil:** Levha, Hilal ve Takvim
 - **4 renk:** Koyu, Açık, Yeşil, Lacivert
@@ -37,6 +37,7 @@ Vakitler doğrudan <a href="https://namazvakitleri.diyanet.gov.tr">Diyanet İşl
 - **Saat dilimi kontrolü:** bilgisayarın saat dilimi seçilen şehirle uyuşmuyorsa uyarır
 - **Oyunlara karışmaz:** sayaç ve balonlar odağı almaz, tam ekran oyunda klavye ve fare oyunda kalır
 - **Ekran kenarlarına yapışma:** yapışık kenarda kalır, birden fazla ekranda da çalışır
+- **Koyu ayarlar penceresi** (istenirse açık)
 - **Türkçe ve İngilizce**
 - **İnternet kesilse de çalışır:** yaklaşık bir yıllık vakit bilgisayara kaydedilir
 - **Windows açılınca otomatik başlatma** (isteğe bağlı)
@@ -62,7 +63,10 @@ Uygulama yeni ve dijital imzası olmadığı için Windows ve tarayıcılar uyar
 | Taşımak | Pencereyi sürükle (ekran kenarlarına yapışır) |
 | Tüm vakitlere göz atmak | Küçük moddayken pencereyi yerinde basılı tut (basılıyken sürüklenebilir) |
 | Boyutu değiştirmek | Pencere üzerinde `Ctrl` + fare tekerleği |
-| Ayarlar ve çıkış | Sağ tık |
+| Ayarları açmak | Görev çubuğunun sağındaki (saatin yanındaki) Ezan Vakti simgesine sol tık |
+| Menü ve çıkış | Aynı simgeye sağ tık |
+
+Simge görünmüyorsa saatin yanındaki **^** okuna tıkla; simgeyi oradan görev çubuğuna sürükleyerek hep görünür yapabilirsin. Sayacın kendisi tıklanınca odak almaz, oyun oynarken klavye ve fare oyunda kalır.
 
 Ayarlar `%APPDATA%\EzanVakti` klasöründe saklanır.
 
@@ -78,7 +82,7 @@ python ezan_vakti.py
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name EzanVakti --icon ikon.ico --add-data "ikon.ico;." --version-file surum_bilgisi.txt ezan_vakti.py
+pyinstaller --onefile --windowed --name EzanVakti --icon ikon.ico --add-data "ikon.ico;." --add-data "ezan_hayye.wav;." --version-file surum_bilgisi.txt ezan_vakti.py
 ```
 
 ## Not
@@ -86,6 +90,8 @@ pyinstaller --onefile --windowed --name EzanVakti --icon ikon.ico --add-data "ik
 Bu uygulama gönüllü olarak geliştirilmiş, resmi olmayan bir projedir ve Diyanet İşleri Başkanlığı ile bir bağlantısı yoktur. Vakit bilgileri Diyanet'in herkese açık sitesinden okunur.
 
 Hadis metinleri uygulamanın içinde yer almaz. Uygulamada yalnızca seçilen hadislerin kaynak bilgisi (kitap ve numara) bulunur. Türkçe ve İngilizce metinler ilk kullanımda açık [hadith-api](https://github.com/fawazahmed0/hadith-api) veri setinden indirilir ve bilgisayarda saklanır (yaklaşık 75 KB). Çevirilerin hakları ilgili çevirmenlere aittir.
+
+Uyarı seslerindeki ezan bölümü ("Hayye ale's-salâh"), Wikimedia Commons'taki [Beautiful adhan](https://commons.wikimedia.org/wiki/File:Beautiful_adhan.ogg) kaydından (Adam-synagda, CC0) alınmıştır.
 
 Ekran görüntüsünün arka planındaki Selimiye Camii fotoğrafı [Dosseman](https://commons.wikimedia.org/wiki/File:Edirne_Selimiye_Mosque_Exterior_NW_corner_in_2006_2406.jpg) tarafından çekilmiştir ve [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) lisanslıdır. Fotoğrafın üzerine lacivert bir katman ve uygulama görüntüleri eklendi. `docs/ekran.png` de aynı lisansla paylaşılır.
 

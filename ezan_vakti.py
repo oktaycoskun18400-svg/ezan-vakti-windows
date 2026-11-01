@@ -3,7 +3,8 @@
 
 Vakitler Diyanet İşleri Başkanlığı'nın sitesinden (namazvakitleri.diyanet.gov.tr) alınır.
 Sol tık: ayrıntıları aç/kapat, sürükle: taşı (ekran kenarlarına yapışır),
-Ctrl + fare tekerleği: boyut, sağ tık: menü (ayarlar, çıkış).
+Ctrl + fare tekerleği: boyut. Menü (ayarlar, çıkış) görev çubuğunun sağındaki simgede: sol tık
+ayarları açar, sağ tık menüyü. Sayacın kendisi tıklanınca odak almaz (tam ekran oyunlar için).
 """
 import ctypes
 import ctypes.wintypes as wt
@@ -38,7 +39,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 # Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
-SURUM = "0.5.1.2"
+SURUM = "0.5.2"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
@@ -84,18 +85,19 @@ SAYDAMLIK = {"Opak": 1.0, "Yarı saydam": 0.75, "Çok saydam": 0.5, "Saydam (sad
 SAYDAMLIK_ADLARI = {"Opak": ("Opak", "Opaque"), "Yarı saydam": ("Yarı saydam", "Semi-transparent"),
                     "Çok saydam": ("Çok saydam", "Very transparent"),
                     "Saydam (sadece yazı)": ("Saydam (sadece yazı)", "Transparent (text only)")}
+AYAR_TEMALARI = {"koyu": ("Koyu", "Dark"), "acik": ("Açık", "Light")}
 ESKI_BOYUTLAR = {"Küçük": 10, "Orta": 13, "Büyük": 17, "Çok büyük": 22}
 BOYUT_MIN, BOYUT_MAX = 8, 40
 # ses kimliği: (Türkçe ad, İngilizce ad) - dahili sesler uygulama içinde üretilir
 SESLER = {
+    "ezan":   ("Ezan: Hayye ale's-salâh", "Adhan: Hayya 'ala's-salah"),
     "zil":    ("Yumuşak zil", "Soft chime"),
     "ding":   ("Tek ding", "Single ding"),
-    "bip":    ("Üç kısa bip", "Three short beeps"),
     "hicaz":  ("Hicaz ezgisi (ney)", "Hijaz melody (ney)"),
     "ussak":  ("Uşşak ezgisi (ney)", "Ushshaq melody (ney)"),
-    "rast":   ("Rast ezgisi (ney)", "Rast melody (ney)"),
     "custom": ("Kendi ses dosyam (mp3, wav...)", "My own sound file (mp3, wav...)"),
 }
+KALDIRILAN_SESLER = {"bip": "ding", "rast": "hicaz"}
 ONIZLEME_AYARLARI = ("style", "expanded", "theme", "opacity", "size")
 # kimlikler ayar dosyasında saklandığı için değişmez, sadece görünen adlar değişebilir
 STILLER = {"kart": ("Levha", "Plaque"), "hap": ("Hilal", "Crescent"), "klasik": ("Takvim", "Almanac")}
@@ -149,11 +151,12 @@ METINLER = {
     "hadith_frame": (" Hadis ", " Hadith "),
     "hadith_alert": ("Vakte belirlenen süre kala hadis göster", "Show a hadith before the prayer time"),
     "hadith_time": ("Vakit girdiğinde hadis göster", "Show a hadith when the prayer time begins"),
-    "hadith_hint": ("Süre, yukarıdaki \"dakika kala\" ayarıdır. Sağ tık → \"Bir hadis göster\" her zaman çalışır.",
-                    "The time is the \"minutes before\" setting above. Right-click → \"Show a hadith\" "
-                    "always works."),
+    "hadith_hint": ("Süre, yukarıdaki \"dakika kala\" ayarıdır. Görev çubuğundaki simgeye sağ tık → \"Bir hadis göster\" her zaman çalışır.",
+                    "The time is the \"minutes before\" setting above. Right-click the taskbar icon → "
+                    "\"Show a hadith\" always works."),
     "menu_quit": ("Çıkış", "Quit"),
-    "choose_loc": ("Konum seçin (sağ tık)", "Choose location (right-click)"),
+    "settings_look": ("Ayarlar penceresi:", "Settings window:"),
+    "choose_loc": ("Konum seçin (sağdaki simge)", "Choose location (tray icon)"),
     "loading_times": ("Vakitler alınıyor...", "Loading times..."),
     "fetch_err": ("Vakitler alınamadı:", "Could not get prayer times:"),
     "settings_title": ("Ezan Vakti - Ayarlar", "Prayer Times - Settings"),
@@ -206,6 +209,7 @@ VARSAYILAN_AYARLAR = {
     "hadis_uyari": True,  # vakte alarm_minutes kala hadis göster
     "hadis_vakit": True,  # vakit girdiğinde hadis göster
     "guncelleme_otomatik": True, "guncelleme_son_kontrol": "",
+    "settings_theme": "koyu",  # ayarlar penceresinin görünümü
 }
 # Vakit hesap yöntemleri: (Türkçe ad, İngilizce ad, kısa Türkçe, kısa İngilizce)
 HESAPLAR = {
@@ -231,12 +235,15 @@ def eski_ayarlari_cevir(cfg):
         cfg["size"] = ESKI_BOYUTLAR.get(cfg["size"], 13)
     if cfg["sound"] == "Kendi ses dosyam (.wav)":
         cfg["sound"] = "custom"
+    cfg["sound"] = KALDIRILAN_SESLER.get(cfg["sound"], cfg["sound"])  # 0.5.2'de çıkarılan sesler
     if cfg["sound"] not in SESLER:
         cfg["sound"] = "zil"
     if cfg["style"] not in STILLER:
         cfg["style"] = "kart"
     if cfg["theme"] not in TEMALAR:
         cfg["theme"] = VARSAYILAN_TEMA
+    if cfg["settings_theme"] not in AYAR_TEMALARI:
+        cfg["settings_theme"] = "koyu"
     if cfg["opacity"] not in SAYDAMLIK:
         cfg["opacity"] = "Yarı saydam"
     if cfg["language"] not in DILLER:
@@ -1296,6 +1303,119 @@ def odagi_geri_ver(onceki):
         _user32.SetForegroundWindow(onceki)
 
 
+# ---------------------------------------------------------------- bildirim alanı simgesi
+
+class NOTIFYICONDATAW(ctypes.Structure):
+    _fields_ = [("cbSize", wt.DWORD), ("hWnd", wt.HWND), ("uID", wt.UINT), ("uFlags", wt.UINT),
+                ("uCallbackMessage", wt.UINT), ("hIcon", wt.HICON), ("szTip", wt.WCHAR * 128),
+                ("dwState", wt.DWORD), ("dwStateMask", wt.DWORD), ("szInfo", wt.WCHAR * 256),
+                ("uVersion", wt.UINT), ("szInfoTitle", wt.WCHAR * 64), ("dwInfoFlags", wt.DWORD),
+                ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", wt.HICON)]
+
+
+_WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
+
+
+class WNDCLASSW(ctypes.Structure):
+    _fields_ = [("style", wt.UINT), ("lpfnWndProc", _WNDPROC), ("cbClsExtra", ctypes.c_int),
+                ("cbWndExtra", ctypes.c_int), ("hInstance", wt.HINSTANCE), ("hIcon", wt.HICON),
+                ("hCursor", wt.HANDLE), ("hbrBackground", wt.HANDLE), ("lpszMenuName", wt.LPCWSTR),
+                ("lpszClassName", wt.LPCWSTR)]
+
+
+_user32.DefWindowProcW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+_user32.DefWindowProcW.restype = ctypes.c_ssize_t
+_user32.CreateWindowExW.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID]
+_user32.CreateWindowExW.restype = wt.HWND
+_user32.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT, ctypes.c_int, ctypes.c_int, wt.UINT]
+_user32.LoadImageW.restype = wt.HANDLE
+_user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+_user32.DestroyWindow.argtypes = [wt.HWND]
+_shell32 = ctypes.windll.shell32
+_shell32.Shell_NotifyIconW.argtypes = [wt.DWORD, ctypes.POINTER(NOTIFYICONDATAW)]
+
+NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
+NIF_MESSAGE, NIF_ICON, NIF_TIP = 1, 2, 4
+WM_TRAY = 0x8000 + 1  # WM_APP + 1
+WM_CLOSE, WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP = 0x0010, 0x0002, 0x0202, 0x0205
+
+
+class BildirimSimgesi:
+    """Görev çubuğunun sağındaki bildirim alanında (saatin yanında) duran simge.
+
+    Sol tık ayarları, sağ tık menüyü açar. Sayacın kendisi hiç odak almadığı için menü buradan açılır;
+    böylece oyun oynarken sayaca yanlışlıkla tıklamak oyunun klavye/fare odağını bozmaz.
+    Simge kendi iş parçacığında, kendi Windows mesaj döngüsüyle çalışır; tıklamalar 'olay'
+    fonksiyonuyla ("ayarlar" / "menu", x, y) olarak bildirilir.
+    """
+
+    def __init__(self, ikon_yolu, ipucu, olay):
+        self.ikon_yolu, self.ipucu, self.olay = ikon_yolu, ipucu[:127], olay
+        self.hwnd, self.ikon = None, None
+        self._hazir = threading.Event()
+        threading.Thread(target=self._calis, daemon=True).start()
+        self._hazir.wait(5)
+
+    def _veri(self, bayraklar):
+        nid = NOTIFYICONDATAW(cbSize=ctypes.sizeof(NOTIFYICONDATAW), hWnd=self.hwnd, uID=1, uFlags=bayraklar,
+                              uCallbackMessage=WM_TRAY, hIcon=self.ikon)
+        nid.szTip = self.ipucu
+        return nid
+
+    def _ekle(self):
+        _shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self._veri(NIF_MESSAGE | NIF_ICON | NIF_TIP)))
+
+    def _calis(self):
+        yeniden = _user32.RegisterWindowMessageW("TaskbarCreated")  # Explorer yeniden başlarsa simgeyi geri koy
+
+        def pencere_islevi(hwnd, mesaj, wparam, lparam):
+            if mesaj == WM_TRAY:
+                if lparam in (WM_LBUTTONUP, WM_RBUTTONUP):
+                    nokta = wt.POINT()
+                    _user32.GetCursorPos(ctypes.byref(nokta))
+                    self.olay("ayarlar" if lparam == WM_LBUTTONUP else "menu", nokta.x, nokta.y)
+                return 0
+            if mesaj == yeniden:
+                self._ekle()
+                return 0
+            if mesaj == WM_CLOSE:
+                _shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self._veri(0)))
+                _user32.DestroyWindow(hwnd)
+                return 0
+            if mesaj == WM_DESTROY:
+                _user32.PostQuitMessage(0)
+                return 0
+            return _user32.DefWindowProcW(hwnd, mesaj, wparam, lparam)
+
+        self._islev = _WNDPROC(pencere_islevi)  # çöp toplayıcı silmesin
+        sinif = WNDCLASSW(lpfnWndProc=self._islev, lpszClassName="EzanVaktiBildirim")
+        _user32.RegisterClassW(ctypes.byref(sinif))
+        self.hwnd = _user32.CreateWindowExW(0, "EzanVaktiBildirim", "Ezan Vakti", 0, 0, 0, 0, 0,
+                                            None, None, None, None)
+        boy = _user32.GetSystemMetrics(49)  # SM_CXSMICON: bildirim alanı simge boyu
+        self.ikon = _user32.LoadImageW(None, self.ikon_yolu, 1, boy, boy, 0x10)  # IMAGE_ICON, LR_LOADFROMFILE
+        self._ekle()
+        self._hazir.set()
+        mesaj = wt.MSG()
+        while _user32.GetMessageW(ctypes.byref(mesaj), None, 0, 0) > 0:
+            _user32.TranslateMessage(ctypes.byref(mesaj))
+            _user32.DispatchMessageW(ctypes.byref(mesaj))
+
+    def ipucu_degistir(self, metin):
+        """Fare simgenin üstüne gelince görünen yazı (ör. "Ezan Vakti · İkindiye 0:12")."""
+        metin = metin[:127]
+        if self.hwnd and metin != self.ipucu:
+            self.ipucu = metin
+            _shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self._veri(NIF_TIP)))
+
+    def kaldir(self):
+        if self.hwnd:
+            # simgeyi hemen sil: uygulama kapanırken simgenin iş parçacığı mesajı işleyemeden bitebilir
+            _shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self._veri(0)))
+            _user32.PostMessageW(self.hwnd, WM_CLOSE, 0, 0)
+
+
 # ---------------------------------------------------------------- ses
 # Windows'un ses düzeni "Ses yok" olsa bile çalsın diye sesler dosyadan çalınır.
 
@@ -1341,15 +1461,10 @@ def ses_ding():
     return _pcm(_yanki(_can_notasi(880.0, 1.8, sonum=2.4), 0.18))
 
 
-def ses_bip():
-    ornekler = []
-    for _ in range(3):
-        for i in range(int(HZ * 0.13)):
-            t = i / HZ
-            zarf = min(1.0, t * 300, (0.13 - t) * 300)
-            ornekler.append(math.sin(2 * math.pi * 988 * t) * zarf)
-        ornekler += [0.0] * int(HZ * 0.11)
-    return _pcm(ornekler)
+def ses_ezan():
+    """Ezandan "Hayye ale's-salâh" bölümü (Wikimedia Commons, "Beautiful adhan", CC0)."""
+    with wave.open(kaynak_yolu("ezan_hayye.wav"), "rb") as w:
+        return (w.getnchannels(), w.getsampwidth(), w.getframerate()), w.readframes(w.getnframes())
 
 
 def _ney_melodisi(kok, perdeler, ezgi, vurus=0.36):
@@ -1388,7 +1503,6 @@ def _ney_melodisi(kok, perdeler, ezgi, vurus=0.36):
 # Makam dizileri (sent): Türk müziğindeki koma aralıklarına yakın değerler
 HICAZ = [0, 113, 384, 498, 702, 792, 996, 1200]
 USSAK = [0, 165, 294, 498, 702, 792, 996, 1200]
-RAST = [0, 204, 384, 498, 702, 906, 1086, 1200]
 
 
 def ses_hicaz():
@@ -1401,11 +1515,6 @@ def ses_ussak():
         (3, .5), (2, .5), (1, .5), (2, .5), (3, 1.5), (2, .5), (1, .5), (0, 2)], vurus=0.28)
 
 
-def ses_rast():
-    return _ney_melodisi(392.0, RAST, [
-        (4, .5), (3, .5), (2, .5), (3, .5), (4, 1.5), (2, .5), (1, .5), (0, 2)], vurus=0.28)
-
-
 _uretilen = {}
 
 
@@ -1416,8 +1525,7 @@ def dahili_ses(kimlik):
     return _uretilen[kimlik]
 
 
-SES_URETICILER = {"zil": ses_zil, "ding": ses_ding, "bip": ses_bip,
-                  "hicaz": ses_hicaz, "ussak": ses_ussak, "rast": ses_rast}
+SES_URETICILER = {"ezan": ses_ezan, "zil": ses_zil, "ding": ses_ding, "hicaz": ses_hicaz, "ussak": ses_ussak}
 
 
 def sesi_kis(genislik, veri, carpan):
@@ -1541,10 +1649,9 @@ class EzanVakti:
         self.root.bind("<ButtonPress-1>", self.drag_start)
         self.root.bind("<B1-Motion>", self.drag_move)
         self.root.bind("<ButtonRelease-1>", self.drag_end)
-        self.root.bind("<Button-3>", self.menu_ac)
-        self.root.bind("<Double-Button-1>", lambda e: self.open_settings())  # menüyü bulamayanlar için
         self.root.bind("<Control-MouseWheel>", self.wheel_resize)
 
+        self.simge = BildirimSimgesi(kaynak_yolu("ikon.ico"), self.t("app"), self.simge_olayi)
         self.apply_config()
         self.root.update_idletasks()
         odak_almasin(self.root)
@@ -1893,10 +2000,14 @@ class EzanVakti:
         if self.settings and self.settings.win.winfo_exists():
             self.settings.mod.set("extended" if self.cfg["expanded"] else "compact")
 
-    def menu_ac(self, e):
-        # Kullanıcı bilerek sağ tıkladı: menü düzgün kapanabilsin diye yalnızca bu an odağı al
+    def simge_olayi(self, ne, x, y):
+        """Bildirim alanı simgesine tıklandı (simgenin kendi iş parçacığından gelir)."""
+        self.q.put((lambda _r, _e: self.menu_ac(x, y) if ne == "menu" else self.open_settings(), None, None))
+
+    def menu_ac(self, x, y):
+        # Kullanıcı simgeye bilerek sağ tıkladı: menü düzgün kapanabilsin diye yalnızca bu an odağı al
         _user32.SetForegroundWindow(_hwnd(self.root))
-        self.menu.tk_popup(e.x_root, e.y_root)
+        self.menu.tk_popup(x, y)
 
     def wheel_resize(self, e):
         yeni = self.cfg["size"] + (1 if e.delta > 0 else -1)
@@ -2095,6 +2206,8 @@ class EzanVakti:
         if anahtar != self.last_view:
             self.last_view = anahtar
             self.render(view, expanded)
+            ipucu = self.ana_metin(view[1], view[2]) if view[0] == "vakit" else view[1]
+            self.simge.ipucu_degistir(f"{self.t('app')} · {ipucu}")
             if not self.dragging:  # boyut değişince kenara yapışık kalsın
                 self.place_window()
 
@@ -2292,6 +2405,7 @@ class EzanVakti:
     def open_settings(self, ortala=False):
         if not (self.settings and self.settings.win.winfo_exists()):
             self.settings = AyarlarPenceresi(self)
+            ortala = True  # yeni açılan pencere hep sayacın ekranının ortasında
         w = self.settings.win
         if ortala:  # sayacın bulunduğu ekranın ortasına
             w.update_idletasks()
@@ -2304,6 +2418,7 @@ class EzanVakti:
     def quit(self):
         winsound.PlaySound(None, 0)
         mci_durdur()
+        self.simge.kaldir()
         self.root.destroy()
 
     def run(self):
@@ -2482,6 +2597,70 @@ class HarfleAtla:
                 self.cb.tk.call(self.liste, *komut)
 
 
+# Ayarlar penceresinin koyu görünümü: logodaki lacivert ve altın
+AYAR_RENKLERI = {
+    "koyu": {"bg": "#161d2f", "alan": "#222c45", "fg": "#e9ecf3", "soluk": "#98a2b9", "cizgi": "#36435f",
+             "secili": "#2d3c63", "vurgu": "#d6a84c", "dugme": "#26324f", "dugme_ust": "#31406a",
+             "hata": "#ff8f85", "basari": "#7bd88f"},
+    "acik": {"bg": "SystemButtonFace", "alan": "SystemWindow", "fg": "SystemWindowText", "soluk": "#666666",
+             "secili": "SystemHighlight", "secili_yazi": "SystemHighlightText", "vurgu": "SystemWindowText",
+             "hata": "#b3261e", "basari": "#2a8a2a"},
+}
+
+
+def ayar_temasi(pencere, ad):
+    """Ayarlar penceresinin ttk görünümünü koyu ya da açık yapar; renk tablosunu döner."""
+    r = AYAR_RENKLERI[ad]
+    st = ttk.Style(pencere)
+    if ad == "koyu":
+        st.theme_use("clam")
+        st.configure(".", background=r["bg"], foreground=r["fg"], fieldbackground=r["alan"],
+                     bordercolor=r["cizgi"], lightcolor=r["bg"], darkcolor=r["bg"], troughcolor=r["alan"],
+                     selectbackground=r["secili"], selectforeground=r["fg"], insertcolor=r["fg"],
+                     arrowcolor=r["fg"], focuscolor=r["bg"])
+        st.configure("TNotebook", background=r["bg"], bordercolor=r["cizgi"])
+        st.configure("TNotebook.Tab", background=r["bg"], foreground=r["soluk"], bordercolor=r["cizgi"],
+                     lightcolor=r["bg"])
+        st.map("TNotebook.Tab", background=[("selected", r["alan"])], foreground=[("selected", r["fg"])],
+               lightcolor=[("selected", r["vurgu"])], padding=[("selected", (16, 6))])
+        st.configure("Vertical.TScrollbar", background=r["dugme"], troughcolor=r["alan"], arrowcolor=r["fg"],
+                     bordercolor=r["cizgi"], lightcolor=r["dugme"], darkcolor=r["dugme"])
+        st.configure("TLabelframe", background=r["bg"], bordercolor=r["cizgi"])
+        st.configure("TLabelframe.Label", background=r["bg"], foreground=r["vurgu"])
+        st.configure("TButton", background=r["dugme"], foreground=r["fg"], bordercolor=r["cizgi"],
+                     lightcolor=r["dugme"], darkcolor=r["dugme"])
+        st.map("TButton", background=[("pressed", r["secili"]), ("active", r["dugme_ust"])])
+        st.configure("TCheckbutton", background=r["bg"], indicatorbackground=r["alan"],
+                     indicatorforeground=r["vurgu"], upperbordercolor=r["cizgi"], lowerbordercolor=r["cizgi"])
+        st.map("TCheckbutton", background=[("active", r["bg"])],
+               indicatorbackground=[("pressed", r["secili"]), ("active", r["dugme_ust"])])
+        for tur in ("TCombobox", "TSpinbox"):
+            st.configure(tur, fieldbackground=r["alan"], background=r["dugme"], foreground=r["fg"],
+                         arrowcolor=r["fg"], bordercolor=r["cizgi"], lightcolor=r["alan"], darkcolor=r["alan"])
+        st.map("TCombobox", fieldbackground=[("readonly", r["alan"])], foreground=[("readonly", r["fg"])],
+               selectbackground=[("readonly", r["alan"])], selectforeground=[("readonly", r["fg"])],
+               background=[("active", r["dugme_ust"])])
+    else:
+        st.theme_use("vista" if "vista" in st.theme_names() else "default")
+    st.configure("TNotebook.Tab", padding=(16, 6))
+    st.configure("Soluk.TLabel", foreground=r["soluk"])
+    st.configure("Hata.TLabel", foreground=r["hata"])
+    st.configure("Basari.TLabel", foreground=r["basari"])
+    return r
+
+
+def koyu_baslik(pencere, koyu):
+    """Windows 10/11'de pencerenin başlık çubuğunu da koyu yapar (desteklenmiyorsa bir şey olmaz)."""
+    try:
+        deger = ctypes.c_int(1 if koyu else 0)
+        for ozellik in (20, 19):  # DWMWA_USE_IMMERSIVE_DARK_MODE (yeni ve eski Windows 10 sürümleri)
+            if ctypes.windll.dwmapi.DwmSetWindowAttribute(wt.HWND(_hwnd(pencere)), ozellik,
+                                                          ctypes.byref(deger), 4) == 0:
+                break
+    except (AttributeError, OSError):
+        pass
+
+
 class AyarlarPenceresi:
     def __init__(self, app):
         self.app = app
@@ -2493,7 +2672,8 @@ class AyarlarPenceresi:
         w.attributes("-topmost", True)
         w.resizable(False, False)
         pad = {"padx": 8, "pady": 5}
-        ttk.Style(w).configure("TNotebook.Tab", padding=(16, 6))
+        self.ayar_temasi_orijinal = c["settings_theme"]
+        ayar_temasi(w, c["settings_theme"])
 
         # Başlık şeridi: logo, uygulama adı ve seçili konum
         tema = TEMALAR[VARSAYILAN_TEMA]
@@ -2530,7 +2710,7 @@ class AyarlarPenceresi:
         self.ilce_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
         self.ilce_cb.grid(row=2, column=1, **pad)
         self._harf_arama = [HarfleAtla(cb) for cb in (self.ulke_cb, self.il_cb, self.ilce_cb)]
-        self.tz_lbl = ttk.Label(f, foreground="#b3261e", wraplength=330, justify="left")
+        self.tz_lbl = ttk.Label(f, style="Hata.TLabel", wraplength=330, justify="left")
         self.tz_lbl.grid(row=3, column=0, columnspan=2, sticky="w", padx=8)
         self.saat_dilimi_etiketi()
         self.ulke_cb.set(c["country_name"])
@@ -2544,7 +2724,7 @@ class AyarlarPenceresi:
         ttk.Label(f, text=t("calc")).grid(row=0, column=0, sticky="w", **pad)
         self.hesap = Secim(f, HESAPLAR, c["calc"], en, width=30)
         self.hesap.cb.grid(row=0, column=1, sticky="w", **pad)
-        ttk.Label(f, text=t("calc_hint"), foreground="#666") \
+        ttk.Label(f, text=t("calc_hint"), style="Soluk.TLabel") \
             .grid(row=1, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4))
 
         f = ttk.LabelFrame(genel, text=t("other"), padding=6)
@@ -2558,7 +2738,7 @@ class AyarlarPenceresi:
         self.guncelleme_otomatik = tk.BooleanVar(value=c["guncelleme_otomatik"])
         ttk.Checkbutton(f, text=t("auto_update"), variable=self.guncelleme_otomatik) \
             .grid(row=2, column=0, columnspan=2, sticky="w", **pad)
-        ttk.Label(f, text=f"{t('version')} {SURUM}", foreground="#666") \
+        ttk.Label(f, text=f"{t('version')} {SURUM}", style="Soluk.TLabel") \
             .grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(0, 4))
 
         # ---- Uyarı sekmesi
@@ -2593,7 +2773,7 @@ class AyarlarPenceresi:
         self.ses.cb.bind("<<ComboboxSelected>>", lambda e: self.ses_secildi())
         ttk.Button(sf, text=t("listen"), width=7, command=self.dinle).pack(side="left", padx=4)
         self.ses_dosyasi = c["sound_file"]
-        self.dosya_lbl = ttk.Label(f, foreground="#666")
+        self.dosya_lbl = ttk.Label(f, style="Soluk.TLabel")
         self.dosya_lbl.grid(row=5, column=1, sticky="w", padx=8)
         self.dosya_etiketi()
 
@@ -2607,7 +2787,7 @@ class AyarlarPenceresi:
         self.hadis_vakit = tk.BooleanVar(value=c["hadis_vakit"])
         ttk.Checkbutton(hf, text=t("hadith_alert"), variable=self.hadis_uyari).pack(anchor="w", pady=2)
         ttk.Checkbutton(hf, text=t("hadith_time"), variable=self.hadis_vakit).pack(anchor="w", pady=2)
-        ttk.Label(hf, text=t("hadith_hint"), foreground="#666", wraplength=340, justify="left") \
+        ttk.Label(hf, text=t("hadith_hint"), style="Soluk.TLabel", wraplength=340, justify="left") \
             .pack(anchor="w", pady=(2, 0))
 
         # ---- Görünüm sekmesi (değişiklikler pencerede anında görünür)
@@ -2618,7 +2798,7 @@ class AyarlarPenceresi:
         ttk.Label(f, text=t("mode")).grid(row=1, column=0, sticky="w", **pad)
         self.mod = Secim(f, MODLAR, "extended" if c["expanded"] else "compact", en, width=38)
         self.mod.cb.grid(row=1, column=1, sticky="w", **pad)
-        ttk.Label(f, text=t("mode_hint"), foreground="#666") \
+        ttk.Label(f, text=t("mode_hint"), style="Soluk.TLabel") \
             .grid(row=2, column=1, sticky="w", padx=8, pady=(0, 4))
         ttk.Label(f, text=t("color")).grid(row=3, column=0, sticky="w", **pad)
         self.tema = Secim(f, TEMA_ADLARI, c["theme"], en)
@@ -2631,8 +2811,12 @@ class AyarlarPenceresi:
         tk.Scale(f, from_=BOYUT_MIN, to=BOYUT_MAX, orient="horizontal", length=220,
                  variable=self.boyut, command=lambda _d: self.onizle()) \
             .grid(row=5, column=1, sticky="w", padx=8)
-        ttk.Label(f, text=t("size_hint"), foreground="#666") \
+        ttk.Label(f, text=t("size_hint"), style="Soluk.TLabel") \
             .grid(row=6, column=1, sticky="w", padx=8, pady=(0, 4))
+        ttk.Label(f, text=t("settings_look")).grid(row=7, column=0, sticky="w", **pad)
+        self.ayar_gorunumu = Secim(f, AYAR_TEMALARI, c["settings_theme"], en)
+        self.ayar_gorunumu.cb.grid(row=7, column=1, sticky="w", **pad)
+        self.ayar_gorunumu.cb.bind("<<ComboboxSelected>>", lambda e: self.renkleri_uygula(self.ayar_gorunumu.get()))
         for secim in (self.stil, self.mod, self.tema, self.saydamlik):
             secim.cb.bind("<<ComboboxSelected>>", lambda e: self.onizle())
         self.orijinal = {k: c[k] for k in ONIZLEME_AYARLARI}
@@ -2642,13 +2826,33 @@ class AyarlarPenceresi:
         ttk.Button(bf, text=t("cancel"), command=self.iptal).pack(side="right")
         ttk.Button(bf, text=t("apply"), command=self.uygula).pack(side="right", padx=6)
         ttk.Button(bf, text=t("ok"), command=self.tamam).pack(side="right")
-        self.durum_lbl = ttk.Label(bf, foreground="#2a8a2a")
+        self.durum_lbl = ttk.Label(bf, style="Basari.TLabel")
         self.durum_lbl.pack(side="left")
         w.protocol("WM_DELETE_WINDOW", self.iptal)
+        self.renkleri_uygula(c["settings_theme"])
 
         app.run_bg(get_ulkeler, self.ulkeler_geldi)
         ulke = c["country_id"]
         app.run_bg(get_iller, lambda r, e: self.iller_geldi(r, e, ulke, ilk=True), ulke)
+
+    def renkleri_uygula(self, ad):
+        """Koyu/açık görünümü anında uygular: ttk stilleri, açılır listeler, kaydırıcılar, başlık çubuğu."""
+        r = ayar_temasi(self.win, ad)
+        self.win.configure(bg=r["bg"])
+        liste = {"background": r["alan"], "foreground": r["fg"], "selectbackground": r["secili"],
+                 "selectforeground": r.get("secili_yazi", r["fg"])}
+        yigin = [self.win]
+        while yigin:
+            parca = yigin.pop()
+            yigin.extend(parca.winfo_children())
+            if isinstance(parca, ttk.Combobox):  # açılır listenin kendisi ttk değil, ayrıca boyanır
+                lb = parca.tk.call("ttk::combobox::PopdownWindow", parca) + ".f.l"
+                parca.tk.call(lb, "configure", *[x for k, v in liste.items() for x in ("-" + k, v)])
+            elif isinstance(parca, tk.Scale):
+                parca.configure(bg=r["bg"], fg=r["fg"], troughcolor=r["alan"], activebackground=r["vurgu"],
+                                highlightthickness=0, bd=0 if ad == "koyu" else 1)
+        self.win.update_idletasks()
+        koyu_baslik(self.win, ad == "koyu")
 
     # -------------------------------------------------- konum
 
@@ -2759,6 +2963,9 @@ class AyarlarPenceresi:
         return {"style": self.stil.get(), "expanded": self.mod.get() == "extended",
                 "theme": self.tema.get(), "opacity": self.saydamlik.get(), "size": self.boyut.get()}
 
+    def ayar_gorunumu_kaydet(self):
+        self.app.cfg["settings_theme"] = self.ayar_temasi_orijinal = self.ayar_gorunumu.get()
+
     def onizle(self):
         """Görünüm ayarlarını kaydetmeden pencerede anında göster."""
         yeni = self.gorunum_secimleri()
@@ -2770,6 +2977,8 @@ class AyarlarPenceresi:
         if any(self.app.cfg[k] != v for k, v in self.orijinal.items()):
             self.app.cfg.update(self.orijinal)
             self.app.apply_config()
+        if self.ayar_gorunumu.get() != self.ayar_temasi_orijinal:
+            ayar_temasi(self.win, self.ayar_temasi_orijinal)  # denenen görünüm kaydedilmedi
         self.win.destroy()
 
     # -------------------------------------------------- kaydet
@@ -2827,6 +3036,7 @@ class AyarlarPenceresi:
                  guncelleme_otomatik=self.guncelleme_otomatik.get(),
                  calc=self.hesap.get(),
                  **self.gorunum_secimleri())
+        self.ayar_gorunumu_kaydet()
         try:
             windows_ile_baslat(c["autostart"])
         except OSError as e:

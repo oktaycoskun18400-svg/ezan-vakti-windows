@@ -63,10 +63,10 @@ Uygulama yeni ve dijital imzası olmadığı için Windows ve tarayıcılar uyar
 | Taşımak | Pencereyi sürükle (ekran kenarlarına yapışır) |
 | Tüm vakitlere göz atmak | Küçük moddayken pencereyi yerinde basılı tut (basılıyken sürüklenebilir) |
 | Boyutu değiştirmek | Pencere üzerinde `Ctrl` + fare tekerleği |
-| Ayarları açmak | Görev çubuğunun sağındaki (saatin yanındaki) Ezan Vakti simgesine sol tık |
-| Menü ve çıkış | Aynı simgeye sağ tık |
+| Ayarları açmak | Sayaca çift tık ya da görev çubuğunun sağındaki (saatin yanındaki) Ezan Vakti simgesine sol tık |
+| Menü ve çıkış | Sayaca ya da aynı simgeye sağ tık |
 
-Simge görünmüyorsa saatin yanındaki **^** okuna tıkla; simgeyi oradan görev çubuğuna sürükleyerek hep görünür yapabilirsin. Sayacın kendisi tıklanınca odak almaz, oyun oynarken klavye ve fare oyunda kalır.
+Önde tam ekran bir program (oyun, video) varken sayaca sağ tık ve çift tık bilerek çalışmaz; çalışsaydı odağı oyundan alırdı. O sırada görev çubuğundaki simgeyi kullanabilirsin. Simge görünmüyorsa saatin yanındaki **^** okuna tıkla; oradan görev çubuğuna sürükleyerek hep görünür yapabilirsin. Sayacın kendisi tıklanınca odak almaz, oyun oynarken klavye ve fare oyunda kalır.
 
 Ayarlar `%APPDATA%\EzanVakti` klasöründe saklanır.
 

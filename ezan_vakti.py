@@ -3,8 +3,9 @@
 
 Vakitler Diyanet İşleri Başkanlığı'nın sitesinden (namazvakitleri.diyanet.gov.tr) alınır.
 Sol tık: ayrıntıları aç/kapat, sürükle: taşı (ekran kenarlarına yapışır),
-Ctrl + fare tekerleği: boyut. Menü (ayarlar, çıkış) görev çubuğunun sağındaki simgede: sol tık
-ayarları açar, sağ tık menüyü. Sayacın kendisi tıklanınca odak almaz (tam ekran oyunlar için).
+Ctrl + fare tekerleği: boyut. Menü (ayarlar, çıkış): sayaca sağ tık, ayarlar: sayaca çift tık; önde tam
+ekran bir program (oyun, video) varken bu ikisi odağı almamak için çalışmaz. Görev çubuğunun sağındaki simge
+her zaman çalışır: sol tık ayarlar, sağ tık menü.
 """
 import ctypes
 import ctypes.wintypes as wt
@@ -151,12 +152,12 @@ METINLER = {
     "hadith_frame": (" Hadis ", " Hadith "),
     "hadith_alert": ("Vakte belirlenen süre kala hadis göster", "Show a hadith before the prayer time"),
     "hadith_time": ("Vakit girdiğinde hadis göster", "Show a hadith when the prayer time begins"),
-    "hadith_hint": ("Süre, yukarıdaki \"dakika kala\" ayarıdır. Görev çubuğundaki simgeye sağ tık → \"Bir hadis göster\" her zaman çalışır.",
-                    "The time is the \"minutes before\" setting above. Right-click the taskbar icon → "
-                    "\"Show a hadith\" always works."),
+    "hadith_hint": ("Süre, yukarıdaki \"dakika kala\" ayarıdır. Sayaca ya da görev çubuğundaki simgeye sağ tık → \"Bir hadis göster\" her zaman çalışır.",
+                    "The time is the \"minutes before\" setting above. Right-click the widget or the taskbar "
+                    "icon → \"Show a hadith\" always works."),
     "menu_quit": ("Çıkış", "Quit"),
     "settings_look": ("Ayarlar penceresi:", "Settings window:"),
-    "choose_loc": ("Konum seçin (sağdaki simge)", "Choose location (tray icon)"),
+    "choose_loc": ("Konum seçin (çift tık)", "Choose location (double-click)"),
     "loading_times": ("Vakitler alınıyor...", "Loading times..."),
     "fetch_err": ("Vakitler alınamadı:", "Could not get prayer times:"),
     "settings_title": ("Ezan Vakti - Ayarlar", "Prayer Times - Settings"),
@@ -1312,6 +1313,42 @@ def on_pencere():
     return _user32.GetForegroundWindow()
 
 
+_user32.MonitorFromWindow.argtypes = [wt.HWND, wt.DWORD]
+_user32.MonitorFromWindow.restype = wt.HMONITOR
+_user32.GetWindowRect.argtypes = [wt.HWND, ctypes.POINTER(wt.RECT)]
+_user32.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+MASAUSTU_SINIFLARI = {"Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"}
+
+
+def tam_ekran_uygulama_acik():
+    """Önde tam ekran bir program (kenarlıksız ya da gerçek tam ekran oyun, video...) var mı?
+
+    Varsa sayaca sağ/çift tıklama menü ve ayarları açmaz; açsaydı odağı oyundan alırdı.
+    """
+    try:  # Windows'un kendi bilgisi: tam ekran / Direct3D tam ekran / sunum modu
+        durum = ctypes.c_int()
+        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(durum)) == 0 and durum.value in (2, 3, 4):
+            return True
+    except (AttributeError, OSError):
+        pass
+    h = on_pencere()
+    if not h:
+        return False
+    pid = wt.DWORD()
+    _user32.GetWindowThreadProcessId(h, ctypes.byref(pid))
+    sinif = ctypes.create_unicode_buffer(64)
+    _user32.GetClassNameW(h, sinif, 64)
+    if pid.value == os.getpid() or sinif.value in MASAUSTU_SINIFLARI:
+        return False  # kendi pencerelerimiz ya da masaüstü/görev çubuğu
+    pencere = wt.RECT()
+    _user32.GetWindowRect(h, ctypes.byref(pencere))
+    mi = MONITORINFO()
+    mi.cbSize = ctypes.sizeof(MONITORINFO)
+    _user32.GetMonitorInfoW(_user32.MonitorFromWindow(h, 2), ctypes.byref(mi))
+    m = mi.rcMonitor  # görev çubuğu dahil tüm ekran: büyütülmüş normal pencereler bunu kaplamaz
+    return pencere.left <= m.left and pencere.top <= m.top and pencere.right >= m.right and pencere.bottom >= m.bottom
+
+
 def odagi_geri_ver(onceki):
     """Yeni açılan pencerelerimizden biri odağı kaptıysa odağı önceki programa (ör. oyuna) geri verir."""
     simdiki = on_pencere()
@@ -1678,6 +1715,8 @@ class EzanVakti:
         self.root.bind("<B1-Motion>", self.drag_move)
         self.root.bind("<ButtonRelease-1>", self.drag_end)
         self.root.bind("<Control-MouseWheel>", self.wheel_resize)
+        self.root.bind("<Button-3>", self.sag_tik)
+        self.root.bind("<Double-Button-1>", self.cift_tik)
 
         self.simge = BildirimSimgesi(kaynak_yolu("ikon.ico"), self.t("app"), self.simge_olayi)
         self.apply_config()
@@ -2032,8 +2071,16 @@ class EzanVakti:
         """Bildirim alanı simgesine tıklandı (simgenin kendi iş parçacığından gelir)."""
         self.q.put((lambda _r, _e: self.menu_ac(x, y) if ne == "menu" else self.open_settings(), None, None))
 
+    def sag_tik(self, e):
+        if not tam_ekran_uygulama_acik():  # oyun önündeyken menü açılmaz (görev çubuğu simgesi çalışır)
+            self.menu_ac(e.x_root, e.y_root)
+
+    def cift_tik(self, e):
+        if not tam_ekran_uygulama_acik():
+            self.open_settings()
+
     def menu_ac(self, x, y):
-        # Kullanıcı simgeye bilerek sağ tıkladı: menü düzgün kapanabilsin diye yalnızca bu an odağı al
+        # Kullanıcı bilerek sağ tıkladı: menü düzgün kapanabilsin diye yalnızca bu an odağı al
         _user32.SetForegroundWindow(_hwnd(self.root))
         self.menu.tk_popup(x, y)
 

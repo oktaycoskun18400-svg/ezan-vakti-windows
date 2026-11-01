@@ -39,7 +39,7 @@ CACHE_FILE = os.path.join(DATA_DIR, "vakitler.json")
 SES_FILE = os.path.join(DATA_DIR, "calan_ses.wav")
 
 # Uygulamanın sürümü: yeni sürüm yayınlarken bunu ve surum_bilgisi.txt'yi birlikte güncelle
-SURUM = "0.5.2"
+SURUM = "0.5.3"
 BASE_URL = "https://namazvakitleri.diyanet.gov.tr"
 TURKIYE = ("TÜRKİYE", "2")  # varsayılan ülke (ad, Diyanet kimliği)
 HEADERS = {"User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) EzanVakti/{SURUM}"}
@@ -133,8 +133,8 @@ METINLER = {
                 "Your computer's time zone doesn't match the selected city, so countdowns may be off. "
                 "Check the Windows time zone setting."),
     "hadith_title": ("HADİS-İ ŞERİF", "HADITH"),
-    "hadith_wait": ("Hadisler indiriliyor, biraz sonra tekrar deneyin.",
-                    "Hadiths are being downloaded, please try again shortly."),
+    "hadith_wait": ("Hadisler indiriliyor: %{p} ({i}/{n})\nBu yalnızca ilk kullanımda bir kez olur.",
+                    "Downloading hadiths: {p}% ({i}/{n})\nThis happens only once, on first use."),
     "menu_update": ("Güncellemeleri denetle", "Check for updates"),
     "upd_title": ("GÜNCELLEME", "UPDATE"),
     "upd_available": ("Yeni sürüm {v} hazır. Güncellemek için buraya tıklayın.",
@@ -167,6 +167,10 @@ METINLER = {
     "loading": ("Yükleniyor...", "Loading..."),
     "net_err": ("İnternet hatası", "Connection error"),
     "states_err": ("İl listesi alınamadı:", "Could not get province list:"),
+    "list_wait": ("Konum listesine bağlanılıyor, lütfen bekleyin…", "Connecting to the location list, please wait…"),
+    "list_retry": ("tekrar deneniyor {i}/{n}", "retrying {i}/{n}"),
+    "list_failed": ("Konum listesi alınamadı. İnternet bağlantını kontrol edip ülkeyi yeniden seç.",
+                    "Could not get the location list. Check your connection and pick the country again."),
     "pick_state": ("Önce il seçin", "Choose a province first"),
     "alarm": (" Sesli uyarı ", " Sound alert "),
     "alarm_a": ("Vakte", "Alert"),
@@ -766,17 +770,20 @@ def hadis_indir(kitap, numara):
     return sonuc
 
 
-def eksik_hadisleri_indir(mevcut):
-    """Henüz indirilmemiş seçme hadisleri indirir; {"kitap:no": {...}} döner (arka planda çalışır)."""
+def eksik_hadisleri_indir(mevcut, ilerleme=None):
+    """Henüz indirilmemiş seçme hadisleri indirir; {"kitap:no": {...}} döner (arka planda çalışır).
+
+    ilerleme(bitti, toplam) her hadisten sonra çağrılır (kaç tanesi indirildi göstermek için).
+    """
     yeni = {}
-    for kitap, numara, _ in HADISLER:
-        anahtar = f"{kitap}:{numara}"
-        if anahtar in mevcut:
-            continue
+    eksik = [(k, n) for k, n, _ in HADISLER if f"{k}:{n}" not in mevcut]
+    for sira, (kitap, numara) in enumerate(eksik, 1):
         try:
-            yeni[anahtar] = hadis_indir(kitap, numara)
+            yeni[f"{kitap}:{numara}"] = hadis_indir(kitap, numara)
         except Exception:
-            continue  # bu sefer olmadı; bir sonraki açılışta tekrar denenir
+            pass  # bu sefer olmadı; bir sonraki açılışta tekrar denenir
+        if ilerleme:
+            ilerleme(sira, len(eksik))
     return yeni
 
 
@@ -1220,6 +1227,19 @@ def guncellemeyi_kur(yeni, hedef):
         raise
 
 
+def temiz_ortam():
+    """Başka bir PyInstaller .exe'sini (ör. güncellenmiş sürümü) başlatmak için ortam değişkenleri.
+
+    Çalışan .exe'nin PyInstaller değişkenleri olduğu gibi geçerse yeni .exe kendi dosyalarını açmak yerine
+    eskisinin geçici klasörünü (_MEI...) kullanır; eski sürüm kapanınca o klasör silinir ve yeni sürüm
+    "base_library.zip bulunamadı" hatası verir.
+    """
+    ortam = {k: v for k, v in os.environ.items() if not k.upper().startswith(("_PYI", "_MEI"))}
+    ortam["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    ortam["EZANVAKTI_TEMIZ"] = "1"
+    return ortam
+
+
 def baslangic_komutu():
     if getattr(sys, "frozen", False):
         return f'"{sys.executable}"'
@@ -1628,6 +1648,7 @@ class EzanVakti:
         self._konum = (None, None)  # (anahtar, ilçenin tahmini (enlem, boylam))
         self.hadisler = hadis_onbellegi()  # indirilmiş ham hadis metinleri
         self.hadis_iniyor = False
+        self.hadis_ilerleme = (0, 1)  # (indirilen, toplam)
         self.son_hadisler = []  # aynı hadis kısa sürede tekrar gelmesin
         self.hadis_fired = set()
         self.hadis_hedef = None
@@ -2159,6 +2180,7 @@ class EzanVakti:
     # -------------------------------------------------- her saniye
 
     def tick(self):
+        self.hadis_ilerlemesini_goster()
         if self.tick_count % 2 == 0:  # Windows'ta saat dilimi değiştirildi mi? (çok hafif bir kontrol)
             imza = saat_dilimi_imzasi()
             if imza != self.saat_dilimi:
@@ -2289,7 +2311,7 @@ class EzanVakti:
             if hata:
                 raise hata
             guncellemeyi_kur(yeni, sys.executable)
-            subprocess.Popen([sys.executable, "--guncellendi"], close_fds=True)
+            subprocess.Popen([sys.executable, "--guncellendi"], close_fds=True, env=temiz_ortam())
         except Exception:
             if yeni and os.path.exists(yeni):
                 try:
@@ -2308,11 +2330,13 @@ class EzanVakti:
         if self.balon:
             self.balon.kapat(aninda=True)
         en = self.cfg["language"] == "en"
-        tikla = None
+        tikla, ilerleme = None, None
         if icerik[0] == "tz":
             baslik, metin, kaynak = self.t("tz_title"), self.t("tz_warn"), ""
         elif icerik[0] == "bekle":
-            baslik, metin, kaynak = self.t("hadith_title"), self.t("hadith_wait"), ""
+            baslik, metin, kaynak = self.t("hadith_title"), self.bekleme_metni(), ""
+            bitti, toplam = self.hadis_ilerleme
+            ilerleme = bitti / toplam
         elif icerik[0] == "bilgi":  # ("bilgi", başlık anahtarı, metin anahtarı)
             baslik, metin, kaynak = self.t(icerik[1]), self.t(icerik[2]).format(v=SURUM), ""
         elif icerik[0] == "guncelleme":
@@ -2326,7 +2350,7 @@ class EzanVakti:
             baslik = self.t("hadith_title")
             metin = hadis_ozu(self.hadisler[f"{kitap}:{numara}"][dil], dil)
             kaynak = hadis_kaynagi(kitap, numara, en)
-        self.balon = HadisBalonu(self, baslik, metin, kaynak, icerik, sure_ms, tikla)
+        self.balon = HadisBalonu(self, baslik, metin, kaynak, icerik, sure_ms, tikla, ilerleme)
 
     def balonu_yenile(self):
         """Dil ya da görünüm değişti: açık balonu aynı içerik ve kalan süreyle yeniden çiz."""
@@ -2360,13 +2384,32 @@ class EzanVakti:
         if not eksik or self.hadis_iniyor:
             return
         self.hadis_iniyor = True
-        self.run_bg(eksik_hadisleri_indir, self.hadisler_indi, dict(self.hadisler))
+        self.hadis_ilerleme = (0, 1)
+        self.run_bg(eksik_hadisleri_indir, self.hadisler_indi, dict(self.hadisler), self.hadis_ilerledi)
+
+    def hadis_ilerledi(self, bitti, toplam):
+        self.hadis_ilerleme = (bitti, toplam)  # indirme iş parçacığından; ekrana tick() yansıtır
+
+    def bekleme_metni(self):
+        bitti, toplam = self.hadis_ilerleme
+        return self.t("hadith_wait").format(p=round(100 * bitti / toplam), i=bitti, n=toplam)
+
+    def hadis_ilerlemesini_goster(self):
+        """Açık "hadisler indiriliyor" balonundaki yüzdeyi ve çubuğu günceller."""
+        if self.balon and self.balon.acik() and self.balon.icerik == ("bekle",):
+            bitti, toplam = self.hadis_ilerleme
+            self.balon.ilerleme_ayarla(bitti / toplam, self.bekleme_metni())
 
     def hadisler_indi(self, yeni, error):
         self.hadis_iniyor = False
         if yeni:
             self.hadisler.update(yeni)
             save_json(HADIS_FILE, {"_surum": HADIS_SURUM, "hadis": self.hadisler})
+        if self.balon and self.balon.acik() and self.balon.icerik == ("bekle",):
+            if self.hadis_sec():
+                self.hadis_goster(manuel=True)  # bekleyen kullanıcıya hemen bir hadis göster
+            else:
+                self.balon.kapat()
 
     def hadis_sec(self, konular=None):
         dil = "en" if self.cfg["language"] == "en" else "tr"
@@ -2385,7 +2428,7 @@ class EzanVakti:
         if not secilen:
             if manuel:  # henüz indirilmedi: indirmeyi başlat, kullanıcıya söyle
                 self.hadis_indirmeyi_baslat()
-                self.balon_ac(("bekle",))
+                self.balon_ac(("bekle",), sure_ms=10 * 60 * 1000)  # indirme bitince hadise dönüşür
             return
         self.balon_ac(("hadis", secilen[0], secilen[1]))
 
@@ -2444,7 +2487,7 @@ class HadisBalonu:
 
     SOLMA_MS, SOLMA_HIZLI_MS, SOLMA_ADIM = 500, 200, 12
 
-    def __init__(self, app, baslik, metin, kaynak, icerik=None, sure_ms=HADIS_SURE_MS, tikla=None):
+    def __init__(self, app, baslik, metin, kaynak, icerik=None, sure_ms=HADIS_SURE_MS, tikla=None, ilerleme=None):
         renk, s = app.colors, app.cfg["size"]
         self.icerik, self.kapaniyor = icerik, False
         self.bitis = time.monotonic() + sure_ms / 1000
@@ -2466,7 +2509,16 @@ class HadisBalonu:
         c.create_text(pad, y, text=baslik, font=f_baslik, fill=renk["warn"], anchor="nw")
         y += f_baslik.metrics("linespace") + s * 0.3
         oge = c.create_text(pad, y, text=metin, font=f_metin, fill=renk["fg"], anchor="nw", width=genislik)
+        self.canvas, self.metin_oge, self.cubuk = c, oge, None
         y = c.bbox(oge)[3]
+        if ilerleme is not None:  # ör. hadis indirme yüzdesi
+            y += s * 0.5
+            kalinlik = max(3, s // 4)
+            c.create_rectangle(pad, y, pad + genislik, y + kalinlik, fill=renk["track"], width=0)
+            self.cubuk = (c.create_rectangle(pad, y, pad, y + kalinlik, fill=renk["warn"], width=0),
+                          pad, y, genislik, kalinlik)
+            self.ilerleme_ayarla(ilerleme)
+            y += kalinlik
         if kaynak:
             y += s * 0.4
             c.create_text(pad + genislik, y, text=kaynak, font=f_kaynak, fill=renk["sub"], anchor="ne")
@@ -2489,6 +2541,13 @@ class HadisBalonu:
         # pencereye bağlı olay tuvalde de çalışır; tikla verildiyse (güncelleme) kapanırken o da yapılır
         w.bind("<Button-1>", lambda e: (self.kapat(hizli=True), tikla and tikla()))
         w.after(max(0, int(sure_ms)), self.kapat)
+
+    def ilerleme_ayarla(self, oran, metin=None):
+        if metin is not None and self.canvas.itemcget(self.metin_oge, "text") != metin:
+            self.canvas.itemconfigure(self.metin_oge, text=metin)
+        if self.cubuk:
+            oge, x, y, genislik, kalinlik = self.cubuk
+            self.canvas.coords(oge, x, y, x + genislik * max(0.0, min(1.0, oran)), y + kalinlik)
 
     def konumla(self):
         """Balonu sayacın üstüne (yer yoksa altına) koyar; sayaç sürüklendikçe tekrar çağrılır."""
@@ -2632,6 +2691,8 @@ def ayar_temasi(pencere, ad):
                lightcolor=[("selected", r["vurgu"])], padding=[("selected", (16, 6))])
         st.configure("Vertical.TScrollbar", background=r["dugme"], troughcolor=r["alan"], arrowcolor=r["fg"],
                      bordercolor=r["cizgi"], lightcolor=r["dugme"], darkcolor=r["dugme"])
+        st.configure("Horizontal.TProgressbar", background=r["vurgu"], troughcolor=r["alan"], bordercolor=r["cizgi"],
+                     lightcolor=r["vurgu"], darkcolor=r["vurgu"])
         st.configure("TLabelframe", background=r["bg"], bordercolor=r["cizgi"])
         st.configure("TLabelframe.Label", background=r["bg"], foreground=r["vurgu"])
         st.configure("TButton", background=r["dugme"], foreground=r["fg"], bordercolor=r["cizgi"],
@@ -2709,16 +2770,24 @@ class AyarlarPenceresi:
         f.pack(fill="x")
         ttk.Label(f, text=t("country")).grid(row=0, column=0, sticky="w", **pad)
         self.ulke_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
-        self.ulke_cb.grid(row=0, column=1, **pad)
+        self.ulke_cb.grid(row=0, column=1, sticky="w", **pad)
         ttk.Label(f, text=t("province")).grid(row=1, column=0, sticky="w", **pad)
         self.il_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
-        self.il_cb.grid(row=1, column=1, **pad)
+        self.il_cb.grid(row=1, column=1, sticky="w", **pad)
         ttk.Label(f, text=t("district")).grid(row=2, column=0, sticky="w", **pad)
         self.ilce_cb = ttk.Combobox(f, state="readonly", width=30, height=20)
-        self.ilce_cb.grid(row=2, column=1, **pad)
+        self.ilce_cb.grid(row=2, column=1, sticky="w", **pad)
         self._harf_arama = [HarfleAtla(cb) for cb in (self.ulke_cb, self.il_cb, self.ilce_cb)]
         self.tz_lbl = ttk.Label(f, style="Hata.TLabel", wraplength=330, justify="left")
         self.tz_lbl.grid(row=3, column=0, columnspan=2, sticky="w", padx=8)
+        self.konum_cercevesi = f
+        f.columnconfigure(1, weight=1)  # durum satırı genişlerse fazlası sağ sütuna gitsin, etiketler kaymasın
+        self.liste_durum = ttk.Frame(f)  # konum listesi alınırken görünür
+        self.liste_lbl = ttk.Label(self.liste_durum, style="Soluk.TLabel", wraplength=200, justify="left")
+        self.liste_lbl.pack(anchor="w")
+        self.liste_cubuk = ttk.Progressbar(self.liste_durum, mode="indeterminate", length=200)
+        self.liste_cubuk.pack(anchor="w", pady=(3, 2))
+        self.yuklenen = 0
         self.saat_dilimi_etiketi()
         self.ulke_cb.set(c["country_name"])
         self.il_cb.set(t("loading"))
@@ -2838,9 +2907,9 @@ class AyarlarPenceresi:
         w.protocol("WM_DELETE_WINDOW", self.iptal)
         self.renkleri_uygula(c["settings_theme"])
 
-        app.run_bg(get_ulkeler, self.ulkeler_geldi)
+        self.liste_al(get_ulkeler, self.ulkeler_geldi)
         ulke = c["country_id"]
-        app.run_bg(get_iller, lambda r, e: self.iller_geldi(r, e, ulke, ilk=True), ulke)
+        self.liste_al(get_iller, lambda r, e: self.iller_geldi(r, e, ulke, ilk=True), ulke)
 
     def renkleri_uygula(self, ad):
         """Koyu/açık görünümü anında uygular: ttk stilleri, açılır listeler, kaydırıcılar, başlık çubuğu."""
@@ -2871,6 +2940,49 @@ class AyarlarPenceresi:
         i = self.ulke_cb.current()
         return self.ulkeler[i][1] if self.ulkeler and i >= 0 else self.app.cfg["country_id"]
 
+    LISTE_DENEME = 5
+
+    def liste_al(self, islev, geldi, *args, deneme=1):
+        """Konum listesini arka planda alır. Bu sırada "bağlanılıyor" yazısı ve hareketli çubuk görünür;
+        olmazsa birkaç kez sessizce tekrar dener, hepsi olmazsa pencere açmadan altta yazar."""
+        if deneme == 1:
+            self.yuklenen += 1
+        self.liste_durumu(deneme)
+
+        def sonuc(r, e):
+            if not self.win.winfo_exists():
+                return
+            if e and deneme < self.LISTE_DENEME:
+                self.win.after(1500 * deneme, lambda: self.liste_al(islev, geldi, *args, deneme=deneme + 1))
+                return
+            self.yuklenen -= 1
+            self.liste_durumu(hata=bool(e))
+            geldi(r, e)
+
+        self.app.run_bg(islev, sonuc, *args)
+
+    def liste_durumu(self, deneme=1, hata=False):
+        t = self.app.t
+        if hata:
+            self.liste_cubuk.stop()
+            self.liste_cubuk.pack_forget()
+            self.liste_lbl.configure(text=t("list_failed"), style="Hata.TLabel")
+        elif self.yuklenen > 0:
+            ek = f" ({t('list_retry').format(i=deneme, n=self.LISTE_DENEME)})" if deneme > 1 else ""
+            self.liste_lbl.configure(text=t("list_wait") + ek, style="Soluk.TLabel")
+            if not self.liste_cubuk.winfo_ismapped():
+                self.liste_cubuk.pack(anchor="w", pady=(3, 2))
+                self.liste_cubuk.start(15)
+        else:
+            self.liste_cubuk.stop()
+            self.liste_durum.grid_forget()
+            return
+        # çerçevenin o anki genişliğine sığdır: sütunlar genişleyip açılır listeler kaymasın
+        genislik = max(200, self.konum_cercevesi.winfo_width() - 30)
+        self.liste_lbl.configure(wraplength=genislik)
+        self.liste_cubuk.configure(length=genislik)
+        self.liste_durum.grid(row=4, column=0, columnspan=2, sticky="w", padx=8, pady=(2, 4))
+
     def ulkeler_geldi(self, ulkeler, error):
         if not self.win.winfo_exists():
             return
@@ -2888,7 +3000,7 @@ class AyarlarPenceresi:
         self.il_cb.set(self.app.t("loading"))
         self.ilce_cb.set("")
         ulke = self.ulke_id()
-        self.app.run_bg(get_iller, lambda r, e: self.iller_geldi(r, e, ulke), ulke)
+        self.liste_al(get_iller, lambda r, e: self.iller_geldi(r, e, ulke), ulke)
 
     def iller_geldi(self, iller, error, ulke, ilk=False):
         if not self.win.winfo_exists() or ulke != self.ulke_id():
@@ -2896,7 +3008,6 @@ class AyarlarPenceresi:
         t = self.app.t
         if error:
             self.il_cb.set(t("net_err"))
-            messagebox.showerror(t("app"), f"{t('states_err')}\n{error}", parent=self.win)
             return
         self.iller = iller
         self.il_cb.configure(values=[ad for ad, _ in iller])
@@ -2920,7 +3031,7 @@ class AyarlarPenceresi:
         self.ilce_cb.configure(values=[])
         self.ilce_cb.set(self.app.t("loading"))
         ulke, il = self.ulke_id(), self.iller[i][1]
-        self.app.run_bg(get_ilceler, lambda r, e: self.ilceler_geldi(r, e, ilk, il), ulke, il)
+        self.liste_al(get_ilceler, lambda r, e: self.ilceler_geldi(r, e, ilk, il), ulke, il)
 
     def ilceler_geldi(self, ilceler, error, ilk, il):
         i = self.il_cb.current() if self.win.winfo_exists() else -1
@@ -3060,6 +3171,11 @@ class AyarlarPenceresi:
 
 
 def main():
+    if getattr(sys, "frozen", False) and "--guncellendi" in sys.argv and not os.environ.get("EZANVAKTI_TEMIZ"):
+        # 0.5.2 ve öncesinin güncelleyicisi yeni sürümü eski sürümün geçici klasörüyle başlatıyordu
+        # (bkz. temiz_ortam); o klasör birazdan silineceği için kendini temiz ortamla yeniden başlat.
+        subprocess.Popen([sys.executable, "--guncellendi"], close_fds=True, env=temiz_ortam())
+        return
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # yazılar bulanık olmasın
     except (AttributeError, OSError):
